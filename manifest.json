@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.t3lluz.server-dashboard",
+  "name": "Server Dashboard",
+  "version": "1.0.0",
+  "author": "fredde",
+  "license": "MIT",
+  "description": "Live stats for a server over SSH on Tailscale: CPU, memory, disks, temperature, network, Docker containers and failed services, with restart, reboot and terminal actions.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Server Dashboard",
+    "description": "Server stats in the bar (pick which, or none), and a compact themed dashboard that expands to graphs, storage, containers and processes.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "target": "",
+      "port": 22,
+      "displayName": "",
+      "refreshIntervalSec": 5,
+      "barCpu": true,
+      "barRam": true,
+      "barDisk": false,
+      "barTemp": false,
+      "barNetwork": false,
+      "panelExpanded": false
+    },
+    "schema": [
+      {
+        "key": "target",
+        "type": "string",
+        "label": "SSH target",
+        "description": "user@host, for example casaos@100.64.0.10. A Tailscale IP or MagicDNS name works. The password is stored in the keyring from the panel.",
+        "defaultValue": ""
+      },
+      {
+        "key": "port",
+        "type": "integer",
+        "label": "SSH port",
+        "min": 1,
+        "max": 65535,
+        "step": 1,
+        "defaultValue": 22
+      },
+      {
+        "key": "displayName",
+        "type": "string",
+        "label": "Display name",
+        "description": "Leave empty to use the server's hostname.",
+        "defaultValue": ""
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 2,
+        "max": 120,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "barCpu",
+        "type": "boolean",
+        "label": "Show CPU in the bar",
+        "defaultValue": true
+      },
+      {
+        "key": "barRam",
+        "type": "boolean",
+        "label": "Show RAM in the bar",
+        "defaultValue": true
+      },
+      {
+        "key": "barDisk",
+        "type": "boolean",
+        "label": "Show root disk usage in the bar",
+        "defaultValue": false
+      },
+      {
+        "key": "barTemp",
+        "type": "boolean",
+        "label": "Show CPU temperature in the bar",
+        "defaultValue": false
+      },
+      {
+        "key": "barNetwork",
+        "type": "boolean",
+        "label": "Show network rates in the bar",
+        "description": "Turn every bar stat off to show only the server icon.",
+        "defaultValue": false
+      },
+      {
+        "key": "panelExpanded",
+        "type": "boolean",
+        "label": "Open the panel expanded",
+        "description": "Show graphs, storage, containers and processes without pressing More.",
+        "defaultValue": false
+      }
+    ]
+  }
+}

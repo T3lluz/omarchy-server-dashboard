@@ -1,0 +1,331 @@
+#!/bin/bash
+# SSH transport for the Server Dashboard plugin.
+#
+# Every target gets one multiplexed OpenSSH master, so a poll is a single
+# round trip over the existing session instead of a fresh login every few
+# seconds (slow over a Tailscale relay, and noisy enough to trip fail2ban).
+# The password lives in the Secret Service keyring and reaches ssh through
+# SSH_ASKPASS, so it never appears in argv or on disk.
+
+set -uo pipefail
+
+SERVICE=omarchy-server-dashboard
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/$SERVICE"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+KNOWN_HOSTS="$STATE_DIR/known_hosts"
+SELF="$(readlink -f "$0")"
+
+# ssh calls this script back as its askpass helper.
+if [[ ${SERVER_DASH_ASKPASS:-} == 1 ]]; then
+  case "${1:-}" in
+    *yes/no*|*fingerprint*) echo no; exit 0 ;;
+  esac
+  exec secret-tool lookup service "$SERVICE" target "${SERVER_DASH_TARGET:-}"
+fi
+
+ERRFILE=""
+# The shell kills a probe that outlives its widget; still clean up after it.
+trap '[[ -n $ERRFILE ]] && rm -f "$ERRFILE"' EXIT
+trap 'exit 143' TERM INT
+
+fail() {
+  printf '@@ERROR\n%s\n%s\n' "$1" "$2"
+  exit 1
+}
+
+valid_target() {
+  [[ $1 =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._:-]+$ && $1 != -* ]]
+}
+
+valid_port() {
+  [[ $1 =~ ^[0-9]+$ ]] && (( $1 > 0 && $1 < 65536 ))
+}
+
+lookup_password() {
+  secret-tool lookup service "$SERVICE" target "$1" 2>/dev/null
+}
+
+has_password() {
+  [[ -n $(lookup_password "$1") ]]
+}
+
+askpass_path() {
+  if [[ -x $SELF ]]; then
+    echo "$SELF"
+    return
+  fi
+  # A plugin checkout without the exec bit still needs an executable askpass.
+  local wrapper="$RUNTIME_DIR/server-dash-askpass-$UID"
+  printf '#!/bin/bash\nexec bash %q "$@"\n' "$SELF" > "$wrapper"
+  chmod 700 "$wrapper"
+  echo "$wrapper"
+}
+
+setup() {
+  TARGET=$1
+  PORT=${2:-22}
+  valid_target "$TARGET" || fail config "Use the form user@host, for example casaos@100.64.0.10"
+  valid_port "$PORT" || fail config "Port must be a number between 1 and 65535"
+  HOST=${TARGET#*@}
+
+  mkdir -p "$STATE_DIR"
+  chmod 700 "$STATE_DIR"
+
+  local auth=publickey
+  if has_password "$TARGET"; then
+    auth=password,keyboard-interactive
+  fi
+
+  SSH_OPTS=(
+    -p "$PORT"
+    -o "ControlPath=$RUNTIME_DIR/server-dash-%C"
+    -o "UserKnownHostsFile=$KNOWN_HOSTS"
+    -o StrictHostKeyChecking=accept-new
+    -o ConnectTimeout=8
+    -o ServerAliveInterval=20
+    -o ServerAliveCountMax=3
+    -o NumberOfPasswordPrompts=1
+    -o "PreferredAuthentications=$auth"
+    -o LogLevel=ERROR
+  )
+
+  export SSH_ASKPASS
+  SSH_ASKPASS=$(askpass_path)
+  export SSH_ASKPASS_REQUIRE=force
+  export SERVER_DASH_ASKPASS=1
+  export SERVER_DASH_TARGET=$TARGET
+}
+
+classify() {
+  local err=$1
+  case "$err" in
+    *"IDENTIFICATION HAS CHANGED"*|*"Host key verification failed"*)
+      fail hostkey "The server's host key changed. Trust the new key only if you rebuilt or reinstalled it." ;;
+    *"Permission denied"*|*"Too many authentication failures"*)
+      if has_password "$TARGET"; then
+        fail auth "Wrong username or password for $TARGET"
+      fi
+      fail nopassword "Enter the password for $TARGET" ;;
+    *"Could not resolve hostname"*)
+      tailscale_hint
+      fail unreachable "Could not resolve $HOST" ;;
+    *"Connection refused"*)
+      fail unreachable "$HOST refused the connection. Is SSH listening on port $PORT?" ;;
+    *"timed out"*|*"No route to host"*|*"Network is unreachable"*|*"Connection closed"*|*"Connection reset"*)
+      tailscale_hint
+      fail unreachable "Timed out reaching $HOST" ;;
+  esac
+  fail ssh "$(printf '%s' "$err" | grep -v '^\s*$' | head -n 1)"
+}
+
+tailscale_hint() {
+  command -v tailscale >/dev/null || return 0
+  local status
+  if ! status=$(tailscale status --json 2>/dev/null) || [[ $(jq -r '.BackendState // ""' <<<"$status") != Running ]]; then
+    fail tailscale "Tailscale is off on this computer, so $HOST cannot be reached"
+  fi
+  local peer
+  peer=$(jq -r --arg h "$HOST" '
+    (.Peer // {})[] | select(((.TailscaleIPs // []) | index($h)) or ((.DNSName // "") | ascii_downcase | startswith(($h | ascii_downcase) + ".")))
+    | select(.Online | not)
+    | ((.DNSName // "" | split(".")[0] | select(. != "")) // .HostName) + "\t" + (.LastSeen // "")' <<<"$status" 2>/dev/null | head -n 1)
+  if [[ -n $peer ]]; then
+    local name=${peer%%$'\t'*}
+    local seen=${peer#*$'\t'}
+    local when=""
+    if [[ -n $seen && $seen != 0001-* ]]; then
+      when=$(date -d "$seen" '+%-d %b %H:%M' 2>/dev/null)
+    fi
+    fail unreachable "$name is offline on your tailnet${when:+ (last seen $when)}"
+  fi
+}
+
+target_key() {
+  printf '%s' "$TARGET:$PORT" | md5sum | cut -c1-16
+}
+
+ensure_master() {
+  ssh "${SSH_OPTS[@]}" -O check "$TARGET" >/dev/null 2>&1 && return 0
+
+  # One login at a time per target: concurrent callers wait, then reuse the
+  # master the first one opened instead of each trying the password.
+  local key
+  key=$(target_key)
+  exec 9>"$RUNTIME_DIR/server-dash-$key.lock"
+  flock -w 30 9 || fail ssh "Another connection attempt to $HOST is still running"
+  ssh "${SSH_OPTS[@]}" -O check "$TARGET" >/dev/null 2>&1 && return 0
+
+  # A login refused moments ago would be refused again; do not knock twice.
+  local authfail="$RUNTIME_DIR/server-dash-$key.authfail"
+  if [[ -f $authfail ]] && (( $(date +%s) - $(stat -c %Y "$authfail") < 60 )); then
+    fail auth "Wrong username or password for $TARGET"
+  fi
+
+  # -f keeps the inherited stderr open for the master's whole life, so
+  # capture it through a file rather than a pipe that would never close.
+  ERRFILE=$(mktemp "$RUNTIME_DIR/server-dash-err.XXXXXX")
+  ssh "${SSH_OPTS[@]}" -o ControlMaster=yes -o ControlPersist=600 -fN "$TARGET" \
+    </dev/null >/dev/null 2>"$ERRFILE" 9>&-
+  local rc=$?
+  local err
+  err=$(<"$ERRFILE")
+  rm -f "$ERRFILE"
+  if (( rc != 0 )); then
+    case "$err" in
+      *"Permission denied"*) has_password "$TARGET" && touch "$authfail" ;;
+    esac
+    classify "$err"
+  fi
+  rm -f "$authfail"
+}
+
+remote() {
+  ssh "${SSH_OPTS[@]}" -o ControlMaster=no "$TARGET" "$@"
+}
+
+probe() {
+  setup "$@"
+  ensure_master
+  remote 'sh -s' <<'PROBE'
+echo @@TS; date +%s
+echo @@HOST; hostname 2>/dev/null || cat /etc/hostname 2>/dev/null
+echo @@USER; id -un 2>/dev/null
+echo @@OS; grep -E '^(PRETTY_NAME|NAME|ID)=' /etc/os-release 2>/dev/null
+echo @@UNAME; uname -srm 2>/dev/null
+echo @@CPU; grep -m1 -iE '^(model name|Hardware)' /proc/cpuinfo 2>/dev/null; grep -c '^processor' /proc/cpuinfo 2>/dev/null
+echo @@STAT; grep '^cpu ' /proc/stat 2>/dev/null
+echo @@MEM; grep -E '^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SwapTotal|SwapFree):' /proc/meminfo 2>/dev/null
+echo @@LOAD; cat /proc/loadavg 2>/dev/null
+echo @@UP; cat /proc/uptime 2>/dev/null
+echo @@NET; cat /proc/net/dev 2>/dev/null
+echo @@DF; df -P -k 2>/dev/null
+echo @@HWMON; grep -H . /sys/class/hwmon/hwmon*/name /sys/class/hwmon/hwmon*/temp1_input 2>/dev/null
+echo @@THERMAL; grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp 2>/dev/null
+echo @@PROC; ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null | head -n 9
+echo @@HASDOCKER; command -v docker 2>/dev/null
+echo @@DOCKER; { docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null || sudo -n docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null; } | head -n 40
+echo @@UNITS; systemctl list-units --state=failed --no-legend --plain --no-pager 2>/dev/null | head -n 12
+echo @@REBOOT; test -f /var/run/reboot-required && echo yes
+echo @@END
+PROBE
+  local rc=$?
+  (( rc == 255 )) && fail unreachable "Lost the connection to $HOST"
+  exit 0
+}
+
+# Runs a privileged command, feeding sudo the saved password when there is one.
+as_root() {
+  local cmd=$1
+  local sudo="sudo -n"
+  local pw
+  pw=$(lookup_password "$TARGET")
+  [[ -n $pw ]] && sudo="sudo -S -p ''"
+  local wrapped="if [ \"\$(id -u)\" -eq 0 ]; then $cmd; else $sudo $cmd; fi"
+  if [[ -n $pw ]]; then
+    printf '%s\n' "$pw" | remote "$wrapped"
+  else
+    remote "$wrapped" </dev/null
+  fi
+}
+
+action() {
+  local kind=$3
+  local arg=${4:-}
+  setup "$1" "$2"
+  ensure_master
+
+  case "$kind" in
+    docker-start|docker-stop|docker-restart)
+      [[ $arg =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || fail config "Invalid container name"
+      local verb=${kind#docker-}
+      # Most users are in the docker group; fall back to sudo when they are not.
+      remote "docker $verb $arg" </dev/null >/dev/null 2>&1 || as_root "docker $verb $arg"
+      ;;
+    unit-restart)
+      [[ $arg =~ ^[A-Za-z0-9@_.:\\-]+$ ]] || fail config "Invalid unit name"
+      as_root "systemctl restart $arg"
+      ;;
+    reboot)
+      as_root "systemctl reboot"
+      # The server drops the session as it goes down.
+      ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+      exit 0
+      ;;
+    poweroff)
+      as_root "systemctl poweroff"
+      ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+      exit 0
+      ;;
+    *)
+      fail config "Unknown action: $kind"
+      ;;
+  esac
+}
+
+save_password() {
+  local target=$1
+  valid_target "$target" || fail config "Use the form user@host, for example casaos@100.64.0.10"
+  [[ -n ${SERVER_DASH_PASSWORD:-} ]] || fail config "Password is empty"
+  printf '%s' "$SERVER_DASH_PASSWORD" |
+    secret-tool store --label="Server Dashboard ($target)" service "$SERVICE" target "$target" ||
+    fail keyring "Could not save the password to the keyring"
+  rm -f "$RUNTIME_DIR"/server-dash-*.authfail
+}
+
+disconnect() {
+  setup "$@"
+  ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+  exit 0
+}
+
+forget() {
+  setup "$@"
+  ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+  secret-tool clear service "$SERVICE" target "$TARGET" 2>/dev/null
+  exit 0
+}
+
+trust() {
+  setup "$@"
+  ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+  if [[ $PORT == 22 ]]; then
+    ssh-keygen -R "$HOST" -f "$KNOWN_HOSTS" >/dev/null 2>&1
+  else
+    ssh-keygen -R "[$HOST]:$PORT" -f "$KNOWN_HOSTS" >/dev/null 2>&1
+  fi
+  exit 0
+}
+
+# Interactive session for the terminal buttons; reuses the master when it is up.
+shell_session() {
+  setup "$1" "$2"
+  shift 2
+  if [[ $# -gt 0 ]]; then
+    exec ssh "${SSH_OPTS[@]}" -o ControlMaster=auto -t "$TARGET" "$@"
+  fi
+  exec ssh "${SSH_OPTS[@]}" -o ControlMaster=auto "$TARGET"
+}
+
+peers() {
+  command -v tailscale >/dev/null || exit 0
+  tailscale status --json 2>/dev/null | jq -r '
+    (.Peer // {}) | to_entries[] | .value
+    | select((.TailscaleIPs // []) | length > 0)
+    | [ ((.DNSName // "" | split(".")[0] | select(. != "")) // .HostName // "?"), .TailscaleIPs[0], (.OS // ""), (if .Online then "online" else "offline" end) ]
+    | @tsv' 2>/dev/null
+}
+
+case "${1:-}" in
+  probe) shift; probe "$@" ;;
+  action) shift; action "$@" ;;
+  save) shift; save_password "$@" ;;
+  disconnect) shift; disconnect "$@" ;;
+  forget) shift; forget "$@" ;;
+  trust) shift; trust "$@" ;;
+  shell) shift; shell_session "$@" ;;
+  peers) peers ;;
+  *)
+    echo "usage: server-dash probe|action|save|disconnect|forget|trust|shell|peers ..." >&2
+    exit 2
+    ;;
+esac
