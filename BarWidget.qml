@@ -35,11 +35,12 @@ BarWidget {
   readonly property string displayName: String(setting("displayName", "")).trim()
     || (client ? client.hostLabel : "") || "Server"
   readonly property bool online: !!client && client.online && !!client.snapshot
-  readonly property color barFg: bar ? bar.barForeground : Commons.Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  readonly property color barFg: bar ? bar.barForeground : Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Color.urgent
   readonly property color iconColor: {
     if (!client) return Qt.darker(barFg, 1.55)
     if (client.status === "error" && !client.needsUser) return urgent
+    if (client.online && client.alertCount > 0) return urgent
     if (client.online) return barFg
     return Qt.darker(barFg, 1.55)
   }
@@ -81,16 +82,10 @@ BarWidget {
     if (leader !== root) leader = root
   }
 
-  // Persists inline settings to this widget's shell.json entry, applied
-  // locally first so the panel reacts on the click itself.
-  function persistSettings(values) {
-    var entry = { id: root.moduleName }
-    for (var existing in root.settings) if (existing !== "id") entry[existing] = root.settings[existing]
-    for (var key in values) entry[key] = values[key]
-    root.settings = entry
-    if (root.bar && root.bar.shell && typeof root.bar.shell.updateEntryInline === "function")
-      root.bar.shell.updateEntryInline(root.moduleName, entry)
-  }
+  // Settings come from shell.json itself rather than the bar's copy, so
+  // every monitor agrees after a reload (WidgetSettings.qml).
+  function setting(name, fallback) { return prefs.get(name, fallback) }
+  function persistSettings(values) { prefs.save(values) }
 
   function connectServer(newTarget, newPort, password) {
     if (client) client.connectWith(newTarget, newPort, password)
@@ -106,6 +101,20 @@ BarWidget {
   function close() { if (panelLoader.item) panelLoader.item.close() }
   function toggle() { if (panelLoader.item) panelLoader.item.toggle() }
   function closeForPopoutSwitch() { if (panelLoader.item) panelLoader.item.closeForPopoutSwitch() }
+
+  // summon, hide or toggle through the shell; this widget's own panel when
+  // there is no shell to ask.
+  function summon(how) {
+    var shell = root.bar ? root.bar.shell : null
+    var done = false
+    if (shell && how === "summon" && typeof shell.summon === "function") done = shell.summon(root.moduleName, "{}")
+    else if (shell && how === "hide" && typeof shell.hide === "function") done = shell.hide(root.moduleName)
+    else if (shell && how === "toggle" && typeof shell.toggle === "function") done = shell.toggle(root.moduleName, "{}")
+    if (done) return
+    if (how === "summon") root.open()
+    else if (how === "hide") root.close()
+    else root.toggle()
+  }
   function refresh() { if (client) client.retry() }
   function prepareSettings() { if (panelLoader.item) panelLoader.item.setupOpen = true }
 
@@ -113,7 +122,7 @@ BarWidget {
     var target = panelLoader.item
     if (!target) return
     target.bar = root.bar
-    target.settings = root.settings
+    target.prefs = prefs
     target.anchorItem = button
     target.hostWidget = root
     target.client = root.client
@@ -130,7 +139,6 @@ BarWidget {
   implicitHeight: button.implicitHeight
 
   onBarChanged: { electLeader(); injectPanel() }
-  onSettingsChanged: injectPanel()
   onClientChanged: injectPanel()
   onOpenedChanged: syncOpenCount()
   Component.onCompleted: electLeader()
@@ -144,6 +152,13 @@ BarWidget {
     onTriggered: root.electLeader()
   }
 
+  WidgetSettings {
+    id: prefs
+    moduleName: root.moduleName
+    injected: root.settings
+    shell: root.bar ? root.bar.shell : null
+  }
+
   Loader {
     id: ownClientLoader
     active: root.isLeader
@@ -155,6 +170,8 @@ BarWidget {
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "port"; value: root.port }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "intervalSec"; value: root.intervalSec }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "barMetrics"; value: root.showsMetrics }
+  Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "notify"; value: root.setting("notify", true) === true }
+  Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "displayName"; value: String(root.setting("displayName", "")).trim() }
 
   Loader {
     id: panelLoader
@@ -170,18 +187,18 @@ BarWidget {
   IpcHandler {
     target: "io.github.t3lluz.server-dashboard"
 
-    function open(): void { root.open() }
-    function close(): void { root.close() }
-    function show(): void { root.open() }
-    function hide(): void { root.close() }
-    function toggle(): void { root.toggle() }
+    // Through the shell, which opens the panel on the focused monitor; this
+    // handler belongs to whichever monitor's widget registered first.
+    function open(): void { root.summon("summon") }
+    function close(): void { root.summon("hide") }
+    function show(): void { root.summon("summon") }
+    function hide(): void { root.summon("hide") }
+    function toggle(): void { root.summon("toggle") }
     // The focused monitor's widget opens; every panel is primed since the
     // shell, not this handler, decides which one that is.
     function settings(): void {
       root.broadcast("prepareSettings")
-      var shell = root.bar ? root.bar.shell : null
-      if (shell && typeof shell.summon === "function") shell.summon(root.moduleName, "{}")
-      else root.open()
+      root.summon("summon")
     }
     function refresh(): string { root.refresh(); return "ok" }
     function status(): string {
@@ -235,6 +252,7 @@ BarWidget {
 
         // Pulses while the first connection is in flight.
         Rectangle {
+          id: connectingDot
           readonly property bool connecting: !!root.client && root.client.configured && root.client.status === "connecting"
           visible: connecting
           width: Math.max(4, Style.space(4))
@@ -244,7 +262,7 @@ BarWidget {
           anchors.right: parent.right
           anchors.bottom: parent.bottom
           SequentialAnimation on opacity {
-            running: parent.connecting
+            running: connectingDot.connecting
             loops: Animation.Infinite
             NumberAnimation { from: 1; to: 0.2; duration: 600 }
             NumberAnimation { from: 0.2; to: 1; duration: 600 }

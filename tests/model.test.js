@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, pushHistory, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, shortStatus, parseDf, parseNetDev, parseCpuTemp }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, pushHistory, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, shortStatus, parseDf, parseNetDev, parseCpuTemp, alerts, newAlerts }")()
 
 const sample = (ts, idle, rx) => `@@TS
 ${ts}
@@ -131,6 +131,28 @@ for (const f of process.argv.slice(2)) {
   const snap = Model.parseProbe(fs.readFileSync(f, "utf8"))
   assert.ok(snap && snap.memory && snap.disks.length > 0, "parses " + f)
   console.log(f, "→", snap.hostname, snap.osName, snap.disks.map(d => d.mount).join(","), "temp", snap.cpuTemp, "ifaces", snap.net.ifaces.join(","))
+}
+
+// Alerts: unhealthy and restart-looping containers, full disks, failed units.
+{
+  const snap = {
+    containers: [
+      { name: "web", state: "running", status: "Up 2 hours (unhealthy)" },
+      { name: "db", state: "restarting", status: "Restarting (1) 3 seconds ago" },
+      { name: "old", state: "exited", status: "Exited (0) 2 days ago" },
+      { name: "ok", state: "running", status: "Up 3 days (healthy)" }
+    ],
+    disks: [{ mount: "/", percent: 93.4 }, { mount: "/srv", percent: 40 }],
+    failedUnits: [{ name: "backup.service", description: "" }]
+  }
+  const now = Model.alerts(snap)
+  assert.deepStrictEqual(Object.keys(now).sort(), ["container:db", "container:web", "disk:/", "unit:backup.service"])
+  assert.strictEqual(now["disk:/"], "/ is 93% full")
+  assert.strictEqual(now["container:db"], "db keeps restarting")
+  assert.deepStrictEqual(Model.alerts(null), {})
+  // Only what is new since the last poll is announced.
+  assert.deepStrictEqual(Model.newAlerts(now, now), [])
+  assert.deepStrictEqual(Model.newAlerts({ "disk:/": "/ is 93% full" }, { "disk:/": "/ is 94% full", "unit:x": "x failed" }), ["x failed"])
 }
 
 console.log("model tests passed")

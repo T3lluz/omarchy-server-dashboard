@@ -26,7 +26,9 @@ Panel {
   property bool keyboardCursor: false
   property bool setupOpen: false
   property string confirmKind: ""
-  property bool expanded: setting("panelExpanded", false) === true
+  // The host widget's WidgetSettings: shell.json as every monitor sees it.
+  property var prefs: null
+  readonly property bool expanded: setting("panelExpanded", false) === true
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color accent: Commons.Color.accent
@@ -157,9 +159,7 @@ Panel {
 
   // Remembered in shell.json so the panel reopens the way it was left.
   function toggleExpanded() {
-    expanded = !expanded
-    if (hostWidget && typeof hostWidget.persistSettings === "function")
-      hostWidget.persistSettings({ panelExpanded: expanded })
+    setOption("panelExpanded", !expanded)
   }
 
   function summaryText() {
@@ -235,11 +235,12 @@ Panel {
     formError.text = ""
   }
 
+  function setting(name, fallback) { return prefs ? prefs.get(name, fallback) : fallback }
+
   // Omarchy has no settings screen for plugin widgets, so the panel is it.
   function setOption(key, value) {
     if (hostWidget && typeof hostWidget.persistSettings === "function")
       hostWidget.persistSettings(({ [key]: value }))
-    if (key === "panelExpanded") expanded = value
   }
 
   function scrollIntoView(item) {
@@ -458,9 +459,21 @@ Panel {
             PanelSeparator { foreground: root.foreground }
 
             PanelSectionHeader {
-              text: "PANEL"
+              text: "ALERTS AND PANEL"
               foreground: root.foreground
               fontFamily: root.fontFamily
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Notify me"
+              description: "When the server drops or comes back, a container turns unhealthy, a disk passes 90% or a service fails"
+              checked: root.setting("notify", true) === true
+              foreground: root.foreground
+              accent: root.accent
+              fontFamily: root.fontFamily
+              titleSize: Style.font.body
+              onClicked: root.setOption("notify", !checked)
             }
 
             Toggle {

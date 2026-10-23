@@ -32,6 +32,17 @@ Item {
   property var txHistory: []
   property var peers: []
 
+  // Desktop notifications when the server drops, comes back, or a new alert
+  // (Model.alerts) appears.
+  property bool notify: true
+  property string displayName: ""
+  // The alerts last seen, and whether the server was last seen up; null
+  // until the first answer, so starting the shell never notifies.
+  property var lastAlerts: null
+  property bool announcedDown: false
+  property int failedPolls: 0
+  readonly property int alertCount: Object.keys(snapshot ? Model.alerts(snapshot) : {}).length
+
   property string busyAction: ""
   property string actionStatus: ""
   property bool actionFailed: false
@@ -56,7 +67,43 @@ Item {
     probeWatchdog.restart()
   }
 
+  function notifyUser(urgency, title, body) {
+    if (!notify) return
+    Quickshell.execDetached(["notify-send", "-u", urgency, "-a", "Server Dashboard", "-i", "network-server", title, body])
+  }
+
+  function serverName() {
+    return displayName || hostLabel || "Server"
+  }
+
+  // Two failed polls in a row before calling the server down, so one dropped
+  // packet on the tailnet stays quiet. Ones that need the user (a password,
+  // a changed host key) are shown in the panel, not announced.
+  function noteFailure() {
+    failedPolls += 1
+    if (failedPolls < 2 || announcedDown || lastAlerts === null || needsUser) return
+    announcedDown = true
+    notifyUser("critical", serverName() + " is unreachable", errorText || "No answer over SSH")
+  }
+
+  function noteSnapshot(next) {
+    failedPolls = 0
+    var current = Model.alerts(next)
+    if (announcedDown) {
+      announcedDown = false
+      notifyUser("normal", serverName() + " is back", "Answering again over SSH")
+    }
+    if (lastAlerts !== null) {
+      var fresh = Model.newAlerts(lastAlerts, current)
+      if (fresh.length > 0) notifyUser("critical", serverName() + ": " + fresh[0], fresh.slice(1).join("\n"))
+    }
+    lastAlerts = current
+  }
+
   function reset() {
+    lastAlerts = null
+    announcedDown = false
+    failedPolls = 0
     snapshot = null
     previousSnapshot = null
     cpuHistory = []
@@ -146,6 +193,7 @@ Item {
       errorKind = failure.kind
       errorText = failure.message
       status = "error"
+      noteFailure()
       return
     }
 
@@ -158,6 +206,7 @@ Item {
     errorKind = ""
     errorText = ""
     status = "online"
+    noteSnapshot(next)
 
     if (next.cpuPercent !== null) cpuHistory = Model.pushHistory(cpuHistory, next.cpuPercent, historyLength)
     memHistory = Model.pushHistory(memHistory, next.memory ? next.memory.percent : null, historyLength)
@@ -249,6 +298,8 @@ Item {
       statusClear.restart()
       root.actionFinished(actionProc.kind, ok)
       if (actionProc.kind === "reboot" || actionProc.kind === "poweroff") {
+        // Asked for, so not worth announcing as an outage.
+        root.announcedDown = true
         root.status = "error"
         root.errorKind = "unreachable"
         root.errorText = actionProc.kind === "reboot" ? "Rebooting…" : "Powered off"

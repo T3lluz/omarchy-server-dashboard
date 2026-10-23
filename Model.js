@@ -396,3 +396,34 @@ function shortStatus(status) {
     .replace(/About an? /, "1").replace(/Less than a second/, "<1s")
     .replace(/ \(healthy\)/, " · healthy").replace(/ \(unhealthy\)/, " · unhealthy")
 }
+
+// ---------------------------------------------------------------- alerts
+
+// What is wrong on the server right now, keyed so the same problem keeps the
+// same key from poll to poll: { key: message }. Unhealthy or restart-looping
+// containers, filesystems at 90% or more, and failed systemd units. A
+// stopped container is left out: stopping one is usually on purpose.
+function alerts(snapshot) {
+  var out = {}
+  if (!snapshot) return out
+  var containers = snapshot.containers || []
+  for (var i = 0; i < containers.length; i++) {
+    var c = containers[i]
+    if (/unhealthy/i.test(c.status + " " + c.state)) out["container:" + c.name] = c.name + " is unhealthy"
+    else if (c.state === "restarting") out["container:" + c.name] = c.name + " keeps restarting"
+  }
+  var disks = snapshot.disks || []
+  for (var d = 0; d < disks.length; d++)
+    if (disks[d].percent >= 90) out["disk:" + disks[d].mount] = disks[d].mount + " is " + Math.round(disks[d].percent) + "% full"
+  var units = snapshot.failedUnits || []
+  for (var u = 0; u < units.length; u++) out["unit:" + units[u].name] = units[u].name + " failed"
+  return out
+}
+
+// The alerts in `current` that were not in `previous`, as messages.
+function newAlerts(previous, current) {
+  var fresh = []
+  for (var key in current) if (!previous || !previous.hasOwnProperty(key)) fresh.push(current[key])
+  return fresh
+}
+

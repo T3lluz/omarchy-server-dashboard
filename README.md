@@ -1,59 +1,44 @@
-# Server Dashboard
+<div align="center">
+  <img src="assets/icon.svg" width="72" height="72" alt="Server Dashboard" />
+  <h1>Server Dashboard</h1>
+  <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
+  live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
+  <p>
+    <img alt="Version" src="https://img.shields.io/badge/v1.1.0-111111?label=version" />
+    <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
+    <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
+    <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
+    <img alt="License" src="https://img.shields.io/badge/license-MIT-34413e" />
+  </p>
+  <p><a href="#install"><b>Install</b></a> · <a href="#features">Features</a> · <a href="#connect">Connect</a> · <a href="#settings">Settings</a> · <a href="#security">Security</a></p>
+</div>
 
-An Omarchy bar widget that watches one Linux server over SSH, built for
-servers reached over Tailscale. The bar shows a server mark with the stats
-you pick (CPU and RAM by default, or none). Click it for a compact panel:
+## Features
 
-- CPU, RAM, root disk and CPU temperature dials
-- Network rates, load and running containers on one line
-- Alerts: unhealthy containers, a full root disk, reboot required
-- Failed systemd services with restart
-- Actions: SSH shell, btop/htop on the server, reboot, power off
-
-Press **More** (or `e`) to expand it with:
-
-- CPU, memory, download and upload history graphs
-- System facts: OS, kernel, CPU, load, swap, tasks, uptime, reboot-required
-- Every real filesystem with its usage bar
-- Docker containers with start, stop and restart
-- Top processes by CPU
-
-The panel reopens the way you left it.
-
-The colors, fonts, corner rounding and spacing come from the active Omarchy
-theme, so the panel changes when you switch themes.
-
-Nothing is installed on the server. Every poll is one shell command that reads
-`/proc`, `/sys`, `df`, `ps`, `docker` and `systemctl`, sent over a single
-multiplexed SSH session, so the server sees one login rather than one every
-few seconds.
+- **The bar shows what you pick:** a server mark with CPU and RAM by default, plus root disk, CPU temperature and network rates, or none. The mark turns urgent when the server is unreachable or something needs you.
+- **A compact panel:** CPU, RAM, root disk and temperature dials; network rates, load and running containers on one line; alerts; failed systemd services with restart; and SSH, btop, reboot and power off.
+- **More** (or `e`) expands it with CPU, memory, download and upload history graphs, system facts (OS, kernel, CPU, load, swap, tasks, uptime, reboot required), every real filesystem, Docker containers with start, stop and restart, and the top processes. It reopens the way you left it.
+- **Notifications:** one when the server stops answering and one when it is back, and one for each new problem: a container turning unhealthy or restart-looping, a filesystem passing 90%, a systemd unit failing. Starting the shell never notifies about what was already wrong.
+- **Nothing on the server:** every poll is one shell command reading `/proc`, `/sys`, `df`, `ps`, `docker` and `systemctl`, over a single multiplexed SSH session, so the server sees one login rather than one every few seconds.
+- **Every monitor agrees:** the bar draws the widget once per screen; the first owns the connection, the others mirror it, and all of them read their settings straight from `shell.json`.
+- Colours, fonts, corners and spacing come from the active Omarchy theme.
 
 ## Install
 
-```sh
+```bash
 omarchy plugin add https://github.com/T3lluz/omarchy-server-dashboard.git --enable
 ```
 
-Or by hand: copy this folder to
-`~/.config/omarchy/plugins/io.github.t3lluz.server-dashboard/`, then run
-`omarchy-shell shell rescanPlugins` and
-`omarchy plugin enable io.github.t3lluz.server-dashboard`.
+Needs `openssh`, `secret-tool` (libsecret) with a running keyring, and `jq`; `tailscale` for the machine list and the "Tailscale is off" hint. The server needs `sshd`; the Docker and systemd sections appear when it has them.
 
 ## Connect
 
 Click the bar icon. The panel opens on a connect form:
 
-1. Type `user@host`, for example `casaos@100.64.0.10`. Online machines on
-   your tailnet are listed under the form; click one to fill in its address.
-2. Type the password and press Enter.
+1. Type `user@host`, for example `casaos@100.64.0.10`. Online machines on your tailnet are listed under the form; click one to fill in its address.
+2. Type the password and press Enter, or leave it empty to use your SSH keys.
 
-The password is stored in your keyring (GNOME Keyring, via `secret-tool`)
-and handed to `ssh` through `SSH_ASKPASS`. It never appears in `shell.json`,
-in a command line, or on disk. The target and port are saved in the widget's
-entry in `~/.config/omarchy/shell.json`.
-
-Key-based logins also work: leave the password empty and the widget tries
-your SSH keys.
+The password is stored in your keyring (GNOME Keyring, via `secret-tool`) and handed to `ssh` through `SSH_ASKPASS`. It never appears in `shell.json`, in a command line, or on disk.
 
 ## Use
 
@@ -61,33 +46,21 @@ your SSH keys.
 |-------|--------|
 | Left click | Open or close the dashboard |
 | Middle click | Refresh now |
-| Right click | Open an SSH shell on the server |
+| Right click | SSH shell on the server |
 | `j` / `k`, arrows | Move between containers, services and actions |
 | `enter` | Restart the selected container or service, or run the action |
 | `s` | Start or stop the selected container |
-| `e` | Expand or collapse the panel |
-| `t` | SSH shell |
-| `b` | btop (falls back to htop, then top) |
+| `e` | Expand or collapse |
+| `t` / `b` | SSH shell / btop (falls back to htop, then top) |
 | `r` | Refresh |
-| `c` | Settings: bar stats, panel and connection |
+| `c` | Settings: bar stats, alerts, panel and connection |
 | `esc` | Close |
 
-Reboot, power off and service restarts use `sudo` on the server, fed with the
-saved password. Container actions try `docker` first and fall back to `sudo`.
+Reboot, power off and service restarts use `sudo` on the server, fed the saved password. Container actions try `docker` first and fall back to `sudo`.
 
 ## Settings
 
-Click the ⚙ button in the panel (or press `c`) for the settings view. It has
-the connection form, a **Show in the bar** switch for each stat, and
-**Open expanded**. Changes apply immediately and are saved to
-`~/.config/omarchy/shell.json`. Open it straight from a keybind with:
-
-```sh
-omarchy-shell io.github.t3lluz.server-dashboard settings
-```
-
-The same keys can also be set from a terminal, for example
-`omarchy bar set io.github.t3lluz.server-dashboard barTemp true --json`:
+The ⚙ button in the panel (or `c`) opens them. They are saved in the widget's entry in `~/.config/omarchy/shell.json`, and can be set from a terminal too, for example `omarchy bar set io.github.t3lluz.server-dashboard barTemp true --json`:
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -100,40 +73,39 @@ The same keys can also be set from a terminal, for example
 | `barDisk` | `false` | Root disk usage in the bar |
 | `barTemp` | `false` | CPU temperature in the bar |
 | `barNetwork` | `false` | Download and upload rates in the bar |
+| `notify` | `true` | Desktop notifications for outages and new alerts |
 | `panelExpanded` | `false` | Open the panel expanded |
 
-Turn every `bar*` stat off to show only the server icon. The widget then
-polls every 30 seconds while the panel is closed, only to color the icon
-when the server goes away.
+With every `bar*` stat off the widget polls every 30 seconds while the panel is closed, enough to colour the icon and notify.
 
-The bar draws the widget once per monitor. The first one owns the SSH
-connection and the others mirror it, so the server sees one poller.
+## Commands
 
-## Security notes
+```bash
+omarchy-shell io.github.t3lluz.server-dashboard toggle     # open on the focused monitor; open | close
+omarchy-shell io.github.t3lluz.server-dashboard settings
+omarchy-shell io.github.t3lluz.server-dashboard refresh
+omarchy-shell io.github.t3lluz.server-dashboard status     # JSON: connection, CPU, memory, uptime
+```
 
-- Host keys are trusted on first use and pinned in
-  `~/.local/state/omarchy-server-dashboard/known_hosts`. A changed key stops the
-  connection before the password is sent. The panel then offers to trust the
-  new key, which you should accept only if you reinstalled the server.
-- A wrong password stops polling instead of retrying, so the widget will not
-  trigger fail2ban.
-- The multiplexed session socket lives in `$XDG_RUNTIME_DIR`, readable only by
-  you, and closes after 10 minutes without use.
+## Security
 
-## Requirements
-
-- `openssh`, `secret-tool` (libsecret) with a running keyring, `jq`
-- `tailscale` for the machine list and the "Tailscale is off" hint
-- A Linux server with `sshd`. Docker and systemd sections appear when present.
+- Host keys are trusted on first use and pinned in `~/.local/state/omarchy-server-dashboard/known_hosts`. A changed key stops the connection before the password is sent; the panel then offers to trust the new key, which you should accept only if you reinstalled the server.
+- A wrong password stops polling instead of retrying, so the widget will not trigger fail2ban.
+- The multiplexed session socket lives in `$XDG_RUNTIME_DIR`, readable only by you, and closes after 10 minutes without use.
 
 ## Development
 
-```sh
+```bash
 node tests/model.test.js
-omarchy plugin validate ~/.config/omarchy/plugins/io.github.t3lluz.server-dashboard
-omarchy-shell io.github.t3lluz.server-dashboard status
+bash -n bin/server-dash
+omarchy plugin validate .
+omarchy restart shell    # pick up QML changes
 ```
+
+`Model.js` parses the probe and holds the alert rules, tested under node; `bin/server-dash` is the SSH side. See [AGENTS.md](AGENTS.md) for how the pieces fit.
 
 ## License
 
 MIT
+
+One of a set of Omarchy plugins: [Batteries](https://github.com/T3lluz/omarchy-batteries) · [ROG Deck](https://github.com/T3lluz/omarchy-rog-deck) · [Sonus](https://github.com/T3lluz/omarchy-sonus) · **Server Dashboard**
