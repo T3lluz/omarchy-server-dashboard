@@ -6,7 +6,8 @@ How Server Dashboard is put together, for anyone (or any agent) changing it. The
 
 - `BarWidget.qml`: the bar entry, once per monitor. The first instance (the leader) loads `ServerClient.qml`; the others read the leader's. Hosts `Panel.qml` and the IPC target.
 - `ServerClient.qml`: polling, history, actions and notifications for the one server.
-- `Panel.qml`, `Gauge.qml`, `Sparkline.qml`: the dashboard.
+- `Panel.qml`, `Gauge.qml`, `Sparkline.qml`: the dashboard, built from the panel kit (below).
+- `Updater.qml`, `Update.js`, `bin/plugin-update`: the shared updater, hosted by `ServerClient.qml`.
 - `WidgetSettings.qml`: this widget's `shell.json` entry, read from the file (see below).
 - `Model.js`: parses the probe, rates, formatting and the alert rules. Tested by `tests/model.test.js`.
 - `bin/server-dash`: the SSH side (bash): one multiplexed master per target, the password from the keyring through `SSH_ASKPASS`, pinned host keys.
@@ -15,11 +16,21 @@ How Server Dashboard is put together, for anyone (or any agent) changing it. The
 
 ```bash
 node tests/model.test.js
+node tests/update.test.js
+python3 -B -m unittest discover tests
 bash -n bin/server-dash
 omarchy-shell io.github.t3lluz.server-dashboard status | jq
 ```
 
 Never put a password or token on a command line or in `shell.json`; `bin/server-dash` reads it from the keyring.
+
+## Panel kit
+
+`SectionHeader`, `StatTile`, `ToggleTile`, `SwitchRow`, `Seg`, `Notice`, `LevelBar`, `OptionRow`, `Caption` and `UpdateSection` in the plugin folder are the panel kit: the same files, byte for byte, in ROG Deck, Batteries, Sonus and Server Dashboard, so the four look like one family. Change a kit file in all four or not at all. `Glyph.qml` is the one part each plugin owns: Nerd Font glyphs here, drawn Tabler icons in Batteries.
+
+`Updater.qml`, `Update.js` and `bin/plugin-update` are the shared updater (ROG Deck, Batteries and Server Dashboard; Sonus's engine updates itself the same way). It stashes local edits, untracked files too, before fast-forwarding, and drops the stash when the edits already are the update. `tests/update.test.js` and `tests/test_plugin_update.py` cover it.
+
+Panels never cut text: a `Notice` shows all of its message, a `Caption` breaks long words and paths, and a `ToggleTile` label that does not fit shows in full in its tooltip.
 
 ## Rules that are easy to break
 

@@ -171,6 +171,7 @@ BarWidget {
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "intervalSec"; value: root.intervalSec }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "barMetrics"; value: root.showsMetrics }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "notify"; value: root.setting("notify", true) === true }
+  Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "autoUpdateCheck"; value: root.setting("autoUpdateCheck", true) === true }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "displayName"; value: String(root.setting("displayName", "")).trim() }
 
   Loader {

@@ -55,17 +55,45 @@ Panel {
     { key: "ssh", icon: "󰆍", text: "SSH", hint: "Open a shell on the server" },
     { key: "btop", icon: "󰓅", text: "Monitor", hint: "Open btop (or htop/top) on the server" },
     { key: "reboot", icon: "󰜉", text: "Reboot", hint: "Reboot the server" },
-    { key: "poweroff", icon: "󰐥", text: "Power off", hint: "Shut the server down" },
-    { key: "more", icon: "󰅀", text: "More", hint: "Show graphs, storage, containers and processes (e)" }
+    { key: "poweroff", icon: "󰐥", text: "Power off", hint: "Shut the server down" }
   ]
 
+  // What the bar can show beside the server mark, with the bar's own glyphs.
   readonly property var barOptions: [
-    { key: "barCpu", label: "CPU usage", fallback: true },
-    { key: "barRam", label: "Memory usage", fallback: true },
-    { key: "barDisk", label: "Root disk usage", fallback: false },
-    { key: "barTemp", label: "CPU temperature", fallback: false },
-    { key: "barNetwork", label: "Download and upload", fallback: false }
+    { key: "barCpu", label: "CPU usage", icon: "󰓅", fallback: true },
+    { key: "barRam", label: "Memory usage", icon: "󰍛", fallback: true },
+    { key: "barDisk", label: "Root disk", icon: "󰋊", hint: "How full the root disk is", fallback: false },
+    { key: "barTemp", label: "CPU temp", icon: "󰔏", fallback: false },
+    { key: "barNetwork", label: "Network", icon: "󰇚", hint: "Download and upload rates", fallback: false }
   ]
+  readonly property int barPickedCount: barOptions.filter(function(o) { return setting(o.key, o.fallback) === true }).length
+
+  readonly property var updater: client ? client.updater : null
+
+  // The banners under the hero, as in the other plugins: a changed host key,
+  // the action running or just finished, the server's alerts, an update.
+  readonly property var notices: {
+    var list = []
+    if (!client) return list
+    if (status === "error" && errorKind === "hostkey" && !showSetup)
+      list.push({ key: "hostkey", tone: "urgent", icon: "󰌋", text: client.errorText, action: "trustKey", actionLabel: "Trust it" })
+    if (client.actionStatus !== "")
+      list.push({ key: "action", tone: client.actionFailed ? "urgent" : "accent", busy: client.busyAction !== "",
+                  icon: client.busyAction !== "" ? "󰑐" : (client.actionFailed ? "󰀦" : "󰄬"), text: client.actionStatus })
+    var alerts = alertText()
+    if (alerts !== "" && !showSetup) list.push({ key: "alerts", tone: "urgent", icon: "󰀦", text: alerts.charAt(0).toUpperCase() + alerts.slice(1) })
+    if (updater && updater.notice) list.push(updater.notice)
+    return list
+  }
+
+  function noticeAction(notice) {
+    if (notice.action === "trustKey") client.trustNewKey()
+    else if (notice.action === "update" && updater) updater.apply()
+  }
+
+  function dismissNotice(notice) {
+    if (notice.key === "update" && updater) updater.dismiss()
+  }
 
   readonly property var cursorTargets: {
     var keys = []
@@ -154,7 +182,6 @@ Panel {
     if (key === "ssh") client.openTerminal("")
     else if (key === "btop") client.openTerminal("btop 2>/dev/null || htop 2>/dev/null || top")
     else if (key === "reboot" || key === "poweroff") askConfirm(key)
-    else if (key === "more") toggleExpanded()
   }
 
   // Remembered in shell.json so the panel reopens the way it was left.
@@ -338,20 +365,63 @@ Panel {
           PanelHero {
             id: hero
             width: parent.width
-            title: root.displayName
-            meta: root.heroMeta()
-            detail: !root.client || !root.client.configured ? ""
-              : (root.online ? "online" : (root.status === "error" ? "offline" : "connecting"))
+            title: root.setupOpen && root.client && root.client.configured ? "Settings" : root.displayName
+            meta: root.setupOpen && root.client && root.client.configured ? "Changes save as you make them" : root.heroMeta()
             foreground: root.foreground
             fontFamily: root.fontFamily
-            iconOpacity: root.online ? 1.0 : 0.55
+            // Online or not shows as a dot on the server, as on the bar
+            // icon; the line under the title says what is going on.
             iconComponent: Component {
-              Text {
-                textFormat: Text.PlainText
-                text: "󰒋"
-                color: root.status === "error" && root.client && !root.client.needsUser ? root.urgent : root.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
+              Item {
+                implicitWidth: serverGlyph.implicitWidth
+                implicitHeight: serverGlyph.implicitHeight
+
+                Text {
+                  id: serverGlyph
+                  textFormat: Text.PlainText
+                  text: "󰒋"
+                  color: root.status === "error" && root.client && !root.client.needsUser ? root.urgent : root.foreground
+                  opacity: root.online ? 1 : 0.55
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.display
+                }
+
+                Rectangle {
+                  id: statusDot
+                  readonly property bool connecting: !!root.client && root.client.configured && !root.online && root.status !== "error"
+                  visible: !!root.client && root.client.configured
+                  width: Math.max(8, Style.space(10))
+                  height: width
+                  radius: width / 2
+                  anchors.right: parent.right
+                  anchors.bottom: parent.bottom
+                  anchors.bottomMargin: Style.space(4)
+                  color: root.online ? root.accent : (root.status === "error" ? root.urgent : root.dim)
+                  border.width: Math.max(2, Style.space(2))
+                  border.color: Commons.Color.popups.background
+
+                  SequentialAnimation on opacity {
+                    running: statusDot.connecting
+                    loops: Animation.Infinite
+                    onStopped: statusDot.opacity = 1
+                    NumberAnimation { from: 1; to: 0.25; duration: 600 }
+                    NumberAnimation { from: 0.25; to: 1; duration: 600 }
+                  }
+
+                  PanelToolTip {
+                    visible: dotMouse.containsMouse
+                    text: root.online ? "Online" : (root.status === "error" ? "Offline" : "Connecting")
+                    fontFamily: root.fontFamily
+                  }
+
+                  MouseArea {
+                    id: dotMouse
+                    anchors.fill: parent
+                    anchors.margins: -Style.space(4)
+                    hoverEnabled: true
+                    acceptedButtons: Qt.NoButton
+                  }
+                }
               }
             }
             trailingControl: Component {
@@ -359,7 +429,16 @@ Panel {
                 spacing: Style.space(2)
 
                 PanelActionButton {
-                  visible: !!root.client && root.client.configured
+                  visible: root.online && !root.setupOpen
+                  iconText: root.expanded ? "󰅃" : "󰅀"
+                  tooltipText: root.expanded ? "Less (e)" : "More: graphs, storage, containers and processes (e)"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: root.toggleExpanded()
+                }
+
+                PanelActionButton {
+                  visible: !!root.client && root.client.configured && !root.setupOpen
                   iconText: "󰑐"
                   tooltipText: "Refresh (r)"
                   foreground: root.foreground
@@ -368,8 +447,8 @@ Panel {
                 }
 
                 PanelActionButton {
-                  iconText: "󰒓"
-                  tooltipText: root.setupOpen ? "Close settings (c)" : "Settings: bar stats and connection (c)"
+                  iconText: root.setupOpen ? "󰁍" : "󰒓"
+                  tooltipText: root.setupOpen ? "Back to the dashboard (c)" : "Settings: bar, alerts, connection and updates (c)"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.setupOpen = !root.setupOpen
@@ -378,40 +457,25 @@ Panel {
             }
           }
 
-          Text {
-            visible: text !== ""
-            width: parent.width
-            textFormat: Text.PlainText
-            text: root.client ? root.client.actionStatus : ""
-            color: root.client && root.client.actionFailed ? root.urgent : root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.bodySmall
-            wrapMode: Text.WordWrap
-          }
+          // --------------------------------------------------------- banners
+          Repeater {
+            model: root.notices
 
-          // ------------------------------------------------- host key alarm
-          Column {
-            visible: root.status === "error" && root.errorKind === "hostkey" && !root.showSetup
-            width: parent.width
-            spacing: Style.space(8)
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.client ? root.client.errorText : ""
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-              wrapMode: Text.WordWrap
-            }
-
-            Button {
-              text: "Trust the new key"
-              iconText: "󰌋"
-              bordered: true
+            Notice {
+              required property var modelData
+              width: column.width
+              icon: modelData.icon
+              text: modelData.text
+              tone: modelData.tone
+              actionLabel: modelData.actionLabel || ""
+              busy: !!modelData.busy
+              dismissable: !!modelData.dismissable
               foreground: root.foreground
+              accent: root.accent
+              urgent: root.urgent
               fontFamily: root.fontFamily
-              onClicked: root.client.trustNewKey()
+              onActioned: root.noticeAction(modelData)
+              onDismissed: root.dismissNotice(modelData)
             }
           }
 
@@ -419,82 +483,75 @@ Panel {
           Column {
             visible: root.showSetup && !!root.client && root.client.configured
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(12)
 
             PanelSeparator { foreground: root.foreground }
 
-            PanelSectionHeader {
-              text: "SHOW IN THE BAR"
+            SectionHeader {
+              icon: "󰍜"
+              title: "SHOW IN THE BAR"
+              detail: root.barPickedCount > 0 ? root.barPickedCount + " SHOWN" : "ICON ONLY"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.barOptions
+            Grid {
+              id: barGrid
+              width: parent.width
+              columns: 2
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(8)
 
-              Toggle {
-                required property var modelData
-                readonly property bool on: root.setting(modelData.key, modelData.fallback) === true
-                width: parent.width
-                label: modelData.label
-                checked: on
-                foreground: root.foreground
-                accent: root.accent
-                fontFamily: root.fontFamily
-                titleSize: Style.font.body
-                onClicked: root.setOption(modelData.key, !on)
+              readonly property real tileWidth: (width - columnSpacing) / 2
+
+              Repeater {
+                model: root.barOptions
+
+                ToggleTile {
+                  required property var modelData
+                  readonly property bool on: root.setting(modelData.key, modelData.fallback) === true
+                  width: barGrid.tileWidth
+                  icon: modelData.icon
+                  label: modelData.label
+                  hint: modelData.hint || ""
+                  checked: on
+                  foreground: root.foreground
+                  accent: root.accent
+                  fontFamily: root.fontFamily
+                  onToggled: root.setOption(modelData.key, !on)
+                }
               }
             }
 
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: "Turn everything off to show only the server icon."
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.WordWrap
-            }
-
             PanelSeparator { foreground: root.foreground }
 
-            PanelSectionHeader {
-              text: "ALERTS AND PANEL"
+            SectionHeader {
+              icon: "󰂚"
+              title: "ALERTS AND PANEL"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Toggle {
-              width: parent.width
+            SwitchRow {
+              icon: "󰂚"
               label: "Notify me"
-              description: "When the server drops or comes back, a container turns unhealthy, a disk passes 90% or a service fails"
+              hint: "When the server drops or comes back, a container turns unhealthy, a disk passes 90% or a service fails"
               checked: root.setting("notify", true) === true
               foreground: root.foreground
               accent: root.accent
               fontFamily: root.fontFamily
-              titleSize: Style.font.body
-              onClicked: root.setOption("notify", !checked)
+              onToggled: root.setOption("notify", !checked)
             }
 
-            Toggle {
-              width: parent.width
+            SwitchRow {
+              icon: "󰁌"
               label: "Open expanded"
-              description: "Graphs, storage, containers and processes without pressing More"
+              hint: "Graphs, storage, containers and processes without pressing More"
               checked: root.expanded
               foreground: root.foreground
               accent: root.accent
               fontFamily: root.fontFamily
-              titleSize: Style.font.body
-              onClicked: root.setOption("panelExpanded", !root.expanded)
-            }
-
-            Button {
-              text: "Back to dashboard"
-              iconText: "󰁍"
-              bordered: true
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.setupOpen = false
+              onToggled: root.setOption("panelExpanded", !root.expanded)
             }
           }
 
@@ -507,21 +564,23 @@ Panel {
 
             PanelSeparator { foreground: root.foreground }
 
-            PanelSectionHeader {
-              text: root.client && root.client.configured ? "CONNECTION" : "CONNECT A SERVER"
+            SectionHeader {
+              icon: "󰌘"
+              title: root.client && root.client.configured ? "CONNECTION" : "CONNECT A SERVER"
+              detail: root.client && root.client.configured ? Model.targetHost(root.client.target).toUpperCase() : ""
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Text {
+            Notice {
               visible: root.status === "error" && ["auth", "nopassword", "keyring"].indexOf(root.errorKind) !== -1
-              width: parent.width
-              textFormat: Text.PlainText
+              tone: root.errorKind === "nopassword" ? "accent" : "urgent"
+              icon: root.errorKind === "nopassword" ? "󰌋" : "󰀦"
               text: root.client ? root.client.errorText : ""
-              color: root.errorKind === "nopassword" ? root.dim : root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
+              foreground: root.foreground
+              accent: root.accent
+              urgent: root.urgent
+              fontFamily: root.fontFamily
             }
 
             Row {
@@ -564,25 +623,23 @@ Panel {
               Keys.onEscapePressed: keyCatcher.forceActiveFocus()
             }
 
-            Text {
+            Notice {
               id: formError
               visible: text !== ""
-              width: parent.width
-              textFormat: Text.PlainText
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.WordWrap
+              tone: "urgent"
+              icon: "󰀦"
+              foreground: root.foreground
+              accent: root.accent
+              urgent: root.urgent
+              fontFamily: root.fontFamily
             }
 
-            Text {
-              visible: root.client && root.client.peers.length > 0
+            Caption {
+              visible: !!root.client && root.client.peers.length > 0
               width: parent.width
-              textFormat: Text.PlainText
               text: "Tailscale machines"
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
+              foreground: root.foreground
+              fontFamily: root.fontFamily
             }
 
             Flow {
@@ -635,20 +692,43 @@ Panel {
             }
           }
 
+          // ------------------------------------------------- about and updates
+          PanelSeparator { visible: root.showSetup; foreground: root.foreground }
+
+          UpdateSection {
+            visible: root.showSetup
+            icon: "󰚰"
+            name: "Server Dashboard"
+            version: root.updater ? root.updater.version : ""
+            line: root.updater ? root.updater.line : ""
+            available: !!root.updater && root.updater.available
+            checking: !!root.updater && root.updater.checking
+            busy: !!root.updater && root.updater.busy
+            managed: !root.updater || root.updater.managed
+            notes: root.updater ? root.updater.notes : []
+            showAutoCheck: true
+            autoCheck: root.setting("autoUpdateCheck", true) === true
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            onVisibleChanged: if (visible && root.updater && !root.updater.check && !root.updater.checking) root.updater.checkNow()
+            onCheckRequested: root.updater.checkNow()
+            onApplyRequested: root.updater.apply()
+            onAutoCheckToggled: root.setOption("autoUpdateCheck", !autoCheck)
+          }
+
           // ------------------------------------------------------- unreachable
-          Text {
-            visible: !root.showSetup && root.client && root.client.configured && !root.online
+          Caption {
+            visible: !root.showSetup && !!root.client && root.client.configured && !root.online
               && root.errorKind !== "hostkey"
             width: parent.width
             topPadding: Style.space(6)
             bottomPadding: Style.space(6)
-            textFormat: Text.PlainText
             text: root.status === "error"
               ? "Retrying every 30 seconds. Press r to try now."
               : "Opening an SSH session…"
-            color: root.dim
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
+            foreground: root.foreground
+            fontFamily: root.fontFamily
             horizontalAlignment: Text.AlignHCenter
           }
 
@@ -729,18 +809,6 @@ Panel {
               horizontalAlignment: Text.AlignHCenter
               elide: Text.ElideRight
             }
-
-            Text {
-              visible: text !== ""
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.alertText()
-              color: root.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              horizontalAlignment: Text.AlignHCenter
-              wrapMode: Text.WordWrap
-            }
           }
 
           // ---------------------------------------------------------- activity
@@ -810,39 +878,46 @@ Panel {
           Column {
             visible: root.showDetails
             width: parent.width
-            spacing: Style.space(6)
+            spacing: Style.space(12)
 
-            PanelSectionHeader {
-              text: "SYSTEM"
+            SectionHeader {
+              icon: "󰒋"
+              title: "SYSTEM"
+              detail: root.snap && root.snap.hostname ? String(root.snap.hostname).toUpperCase() : ""
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.infoRows
+            Column {
+              width: parent.width
+              spacing: Style.space(6)
 
-              Row {
-                required property var modelData
-                width: parent.width
-                spacing: Style.space(8)
+              Repeater {
+                model: root.infoRows
 
-                Text {
-                  width: Style.space(64)
-                  textFormat: Text.PlainText
-                  text: modelData.label
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                }
+                Row {
+                  required property var modelData
+                  width: parent.width
+                  spacing: Style.space(8)
 
-                Text {
-                  width: parent.width - Style.space(72)
-                  textFormat: Text.PlainText
-                  text: modelData.value
-                  color: modelData.urgent ? root.urgent : root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
+                  Text {
+                    width: Style.space(64)
+                    textFormat: Text.PlainText
+                    text: modelData.label
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                  }
+
+                  Text {
+                    width: parent.width - Style.space(72)
+                    textFormat: Text.PlainText
+                    text: modelData.value
+                    color: modelData.urgent ? root.urgent : root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
                 }
               }
             }
@@ -854,61 +929,60 @@ Panel {
           Column {
             visible: root.disks.length > 0 && root.showDetails
             width: parent.width
-            spacing: Style.space(8)
+            spacing: Style.space(12)
 
-            PanelSectionHeader {
-              text: "STORAGE"
+            SectionHeader {
+              icon: "󰋊"
+              title: "STORAGE"
+              detail: root.disks.length + (root.disks.length === 1 ? " DISK" : " DISKS")
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.disks
+            Column {
+              width: parent.width
+              spacing: Style.space(8)
 
-              Column {
-                required property var modelData
-                width: parent.width
-                spacing: Style.space(3)
+              Repeater {
+                model: root.disks
 
-                Item {
+                Column {
+                  required property var modelData
                   width: parent.width
-                  implicitHeight: mountLabel.implicitHeight
+                  spacing: Style.space(3)
 
-                  Text {
-                    id: mountLabel
-                    anchors.left: parent.left
-                    width: parent.width - usage.implicitWidth - Style.space(8)
-                    textFormat: Text.PlainText
-                    text: "󰋊 " + modelData.mount
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    elide: Text.ElideMiddle
+                  Item {
+                    width: parent.width
+                    implicitHeight: mountLabel.implicitHeight
+
+                    Text {
+                      id: mountLabel
+                      anchors.left: parent.left
+                      width: parent.width - usage.implicitWidth - Style.space(8)
+                      textFormat: Text.PlainText
+                      text: "󰋊 " + modelData.mount
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      elide: Text.ElideMiddle
+                    }
+
+                    Text {
+                      id: usage
+                      anchors.right: parent.right
+                      textFormat: Text.PlainText
+                      text: Model.bytes(modelData.usedBytes) + " / " + Model.bytes(modelData.totalBytes) + "  " + Model.percent(modelData.percent)
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
                   }
 
-                  Text {
-                    id: usage
-                    anchors.right: parent.right
-                    textFormat: Text.PlainText
-                    text: Model.bytes(modelData.usedBytes) + " / " + Model.bytes(modelData.totalBytes) + "  " + Model.percent(modelData.percent)
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                  }
-                }
-
-                Rectangle {
-                  width: parent.width
-                  height: Math.max(3, Style.space(4))
-                  radius: Style.cornerRadius > 0 ? height / 2 : 0
-                  color: Util.alpha(root.foreground, 0.1)
-
-                  Rectangle {
-                    width: parent.width * Math.max(0, Math.min(1, modelData.percent / 100))
-                    height: parent.height
-                    radius: parent.radius
-                    color: modelData.percent >= 90 ? root.urgent : root.accent
-                    Behavior on width { NumberAnimation { duration: 300; easing.type: Easing.OutCubic } }
+                  LevelBar {
+                    width: parent.width
+                    level: modelData.percent
+                    fill: modelData.percent >= 90 ? root.urgent : root.accent
+                    track: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.1)
                   }
                 }
               }
@@ -921,23 +995,30 @@ Panel {
           Column {
             visible: root.containers.length > 0 && root.showDetails
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(12)
 
-            PanelSectionHeader {
-              text: "CONTAINERS  " + root.runningContainers + "/" + root.containers.length + " RUNNING"
+            SectionHeader {
+              icon: "󰡨"
+              title: "CONTAINERS"
+              detail: root.runningContainers + "/" + root.containers.length + " RUNNING"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.containers
+            Column {
+              width: parent.width
+              spacing: Style.space(2)
 
-              ContainerRow {
-                required property var modelData
-                required property int index
-                width: parent.width
-                container: modelData
-                rowKey: "c:" + index
+              Repeater {
+                model: root.containers
+
+                ContainerRow {
+                  required property var modelData
+                  required property int index
+                  width: parent.width
+                  container: modelData
+                  rowKey: "c:" + index
+                }
               }
             }
           }
@@ -948,23 +1029,31 @@ Panel {
           Column {
             visible: root.failedUnits.length > 0 && !root.showSetup
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(12)
 
-            PanelSectionHeader {
-              text: "FAILED SERVICES"
-              foreground: root.urgent
+            SectionHeader {
+              icon: "󰀦"
+              title: "FAILED SERVICES"
+              detail: root.failedUnits.length + " FAILED"
+              detailColor: root.urgent
+              foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.failedUnits
+            Column {
+              width: parent.width
+              spacing: Style.space(2)
 
-              UnitRow {
-                required property var modelData
-                required property int index
-                width: parent.width
-                unit: modelData
-                rowKey: "u:" + index
+              Repeater {
+                model: root.failedUnits
+
+                UnitRow {
+                  required property var modelData
+                  required property int index
+                  width: parent.width
+                  unit: modelData
+                  rowKey: "u:" + index
+                }
               }
             }
           }
@@ -975,52 +1064,59 @@ Panel {
           Column {
             visible: root.processes.length > 0 && root.showDetails
             width: parent.width
-            spacing: Style.space(4)
+            spacing: Style.space(12)
 
-            PanelSectionHeader {
-              text: "TOP PROCESSES"
+            SectionHeader {
+              icon: "󰘚"
+              title: "TOP PROCESSES"
+              detail: "CPU · MEMORY"
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            Repeater {
-              model: root.processes
+            Column {
+              width: parent.width
+              spacing: Style.space(4)
 
-              Row {
-                required property var modelData
-                width: parent.width
-                spacing: Style.space(8)
+              Repeater {
+                model: root.processes
 
-                Text {
-                  width: parent.width - cpuCol.width - memCol.width - parent.spacing * 2
-                  textFormat: Text.PlainText
-                  text: modelData.name
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  elide: Text.ElideRight
-                }
+                Row {
+                  required property var modelData
+                  width: parent.width
+                  spacing: Style.space(8)
 
-                Text {
-                  id: cpuCol
-                  width: Style.space(58)
-                  textFormat: Text.PlainText
-                  text: modelData.cpu.toFixed(1) + "%"
-                  color: modelData.cpu >= 80 ? root.urgent : root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  horizontalAlignment: Text.AlignRight
-                }
+                  Text {
+                    width: parent.width - cpuCol.width - memCol.width - parent.spacing * 2
+                    textFormat: Text.PlainText
+                    text: modelData.name
+                    color: root.foreground
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    elide: Text.ElideRight
+                  }
 
-                Text {
-                  id: memCol
-                  width: Style.space(58)
-                  textFormat: Text.PlainText
-                  text: Model.bytes(modelData.rssBytes)
-                  color: root.dim
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  horizontalAlignment: Text.AlignRight
+                  Text {
+                    id: cpuCol
+                    width: Style.space(58)
+                    textFormat: Text.PlainText
+                    text: modelData.cpu.toFixed(1) + "%"
+                    color: modelData.cpu >= 80 ? root.urgent : root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    horizontalAlignment: Text.AlignRight
+                  }
+
+                  Text {
+                    id: memCol
+                    width: Style.space(58)
+                    textFormat: Text.PlainText
+                    text: Model.bytes(modelData.rssBytes)
+                    color: root.dim
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    horizontalAlignment: Text.AlignRight
+                  }
                 }
               }
             }
@@ -1029,7 +1125,9 @@ Panel {
           // ----------------------------------------------------------- actions
           PanelSeparator { visible: root.online && !root.showSetup; foreground: root.foreground }
 
-          Flow {
+          // One row, four equal buttons.
+          Row {
+            id: actionRow
             visible: root.online && !root.showSetup
             width: parent.width
             spacing: Style.space(6)
@@ -1042,8 +1140,10 @@ Panel {
                 required property var modelData
                 required property int index
                 readonly property string key: "a:" + index
-                text: modelData.key === "more" ? (root.expanded ? "Less" : "More") : modelData.text
-                iconText: modelData.key === "more" ? (root.expanded ? "󰅃" : "󰅀") : modelData.icon
+                width: (actionRow.width - actionRow.spacing * (root.actions.length - 1)) / root.actions.length
+                text: modelData.text
+                iconText: modelData.icon
+                fontSize: Style.font.caption
                 tooltipText: modelData.hint
                 bordered: true
                 hasCursor: root.cursorActive && root.cursorKey === key
@@ -1056,17 +1156,15 @@ Panel {
             }
           }
 
-          Text {
+          Caption {
             visible: root.online && !root.showSetup
             width: parent.width
-            textFormat: Text.PlainText
             text: root.expanded ? "j/k · enter run · s start/stop · t ssh · b monitor · e less · c settings"
               : "j/k · enter run · t ssh · b monitor · r refresh · e more"
-            color: Qt.darker(root.foreground, 2.1)
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
+            foreground: root.foreground
+            opacity: 0.4
+            fontFamily: root.fontFamily
             horizontalAlignment: Text.AlignHCenter
-            wrapMode: Text.WordWrap
           }
         }
       }
@@ -1118,10 +1216,11 @@ Panel {
       onEntered: root.hover(row.rowKey)
     }
 
+    // In the kit's icon column: 8 in, 22 wide, 10 to the text.
     Rectangle {
       id: dot
       anchors.left: parent.left
-      anchors.leftMargin: Style.space(10)
+      anchors.leftMargin: Style.space(8) + (Style.space(22) - width) / 2
       anchors.verticalCenter: parent.verticalCenter
       width: Math.max(6, Style.space(7))
       height: width
@@ -1132,7 +1231,7 @@ Panel {
     Column {
       id: rowText
       anchors.left: dot.right
-      anchors.leftMargin: Style.space(10)
+      anchors.leftMargin: Style.space(10) + (Style.space(22) - dot.width) / 2
       anchors.right: buttons.left
       anchors.rightMargin: Style.space(6)
       anchors.verticalCenter: parent.verticalCenter
@@ -1208,9 +1307,21 @@ Panel {
       onEntered: root.hover(unitRow.rowKey)
     }
 
+    Glyph {
+      id: unitIcon
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Style.space(22)
+      icon: "󰅚"
+      size: Style.font.title
+      color: root.urgent
+      fontFamily: root.fontFamily
+    }
+
     Column {
       id: unitText
-      anchors.left: parent.left
+      anchors.left: unitIcon.right
       anchors.leftMargin: Style.space(10)
       anchors.right: restart.left
       anchors.rightMargin: Style.space(6)

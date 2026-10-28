@@ -19,5 +19,9 @@ jobs:
         run: python3 -c "import json; m = json.load(open('manifest.json')); assert m['id'] and m['version'] and m['entryPoints']"
       - name: Model tests
         run: node tests/model.test.js
+      - name: Update tests
+        run: |
+          node tests/update.test.js
+          python3 -B -m unittest discover tests
       - name: SSH script parses
         run: bash -n bin/server-dash

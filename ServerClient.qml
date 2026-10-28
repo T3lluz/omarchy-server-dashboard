@@ -47,6 +47,17 @@ Item {
   property string actionStatus: ""
   property bool actionFailed: false
 
+  // Updates go through bin/plugin-update, as in ROG Deck and Batteries; the
+  // settings' About section and the update banner read it.
+  property bool autoUpdateCheck: true
+  readonly property alias updater: updaterItem
+
+  Updater {
+    id: updaterItem
+    pluginDir: decodeURIComponent(String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")).replace(/\/$/, "")
+    autoCheck: root.autoUpdateCheck
+  }
+
   readonly property bool online: status === "online"
   readonly property bool configured: target !== ""
   // These need the user, so retrying would only collect failed logins.

@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+"""Updates for a plugin installed from git: the panel's "Check now" and "Update".
+
+  plugin-update check    JSON: is a newer version on the plugin's git remote
+  plugin-update apply    fast-forward to it, setting local edits aside first
+
+The same file ships in ROG Deck, Batteries and Server Dashboard; it reads
+the plugin's name and id from the manifest next to it.
+
+`apply` rewrites the plugin folder, and the shell reloads a plugin the
+moment a file there changes, which ends every process the plugin started.
+So the panel starts it detached, and it leaves its outcome in
+~/.local/state/<plugin>/update.json for the reloaded panel to show.
+
+Local edits (a development copy, files dropped in by hand) used to stop the
+fast-forward. They are stashed with the untracked files, and the stash is
+dropped again when the edits turn out to be what the update brings anyway.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True
+
+PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
+# Tests set this so a run never notifies or reloads the real shell.
+QUIET = os.environ.get("PLUGIN_UPDATE_QUIET") == "1"
+GIT_ENV = dict(os.environ, GIT_TERMINAL_PROMPT="0",
+               GIT_SSH_COMMAND=os.environ.get("GIT_SSH_COMMAND", "ssh -oBatchMode=yes"))
+
+
+class Failure(Exception):
+    pass
+
+
+def git(*args, timeout=15, binary=False):
+    """stdout of a git command in the plugin folder, or None if it failed."""
+    try:
+        done = subprocess.run(["git", "-C", PLUGIN_DIR, *args], capture_output=True, timeout=timeout,
+                              env=GIT_ENV, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if done.returncode != 0:
+        return None
+    return done.stdout if binary else done.stdout.decode("utf-8", "replace").strip()
+
+
+def manifest(ref=None):
+    if ref:
+        text = git("show", ref + ":manifest.json") or ""
+    else:
+        try:
+            with open(os.path.join(PLUGIN_DIR, "manifest.json"), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            text = ""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+PLUGIN = manifest()
+PLUGIN_ID = PLUGIN.get("id") or os.path.basename(PLUGIN_DIR)
+NAME = PLUGIN.get("name") or PLUGIN_ID
+# io.github.t3lluz.rog-deck keeps its state in ~/.local/state/rog-deck.
+STATE_FILE = os.path.join(STATE_HOME, PLUGIN_ID.rsplit(".", 1)[-1], "update.json")
+
+
+def managed():
+    return os.path.isdir(os.path.join(PLUGIN_DIR, ".git")) and shutil.which("git") is not None
+
+
+def changed_paths():
+    """Every path with local edits: modified, deleted or untracked, not ignored."""
+    out = git("status", "--porcelain", "-z", "--untracked-files=all", binary=True)
+    if out is None:
+        return None
+    paths, entries, i = [], out.split(b"\0"), 0
+    while i < len(entries):
+        entry = entries[i]
+        i += 1
+        if len(entry) < 4:
+            continue
+        paths.append(entry[3:].decode("utf-8", "surrogateescape"))
+        # A rename or copy names the old path in the next entry.
+        if entry[:1] in (b"R", b"C") and i < len(entries):
+            paths.append(entries[i].decode("utf-8", "surrogateescape"))
+            i += 1
+    return paths
+
+
+def matches(ref, paths):
+    """Whether each edited path already holds what `ref` has there."""
+    for path in paths:
+        wanted = git("cat-file", "blob", ref + ":" + path, binary=True)
+        try:
+            with open(os.path.join(PLUGIN_DIR, path), "rb") as f:
+                have = f.read()
+        except FileNotFoundError:
+            have = None
+        except OSError:
+            return False
+        if have != wanted:
+            return False
+    return True
+
+
+def fetch():
+    return git("fetch", "--quiet", "origin", "HEAD", timeout=60) is not None
+
+
+def check():
+    """Compare the installed copy with its git remote.
+
+    Fetching only writes inside .git, which the shell's plugin watcher
+    ignores, so a check never reloads the plugins.
+    """
+    result = {"name": NAME, "current": PLUGIN.get("version"), "latest": None, "available": False,
+              "managed": False, "dirty": False, "notes": [], "error": None, "checked": int(time.time())}
+    if not managed():
+        result["error"] = "Installed without git, so it can't update itself"
+        return result
+    result["managed"] = True
+    result["dirty"] = bool(changed_paths())
+    if not fetch():
+        result["error"] = "Couldn't reach GitHub"
+        return result
+    head, fetched = git("rev-parse", "HEAD"), git("rev-parse", "FETCH_HEAD")
+    result["latest"] = manifest("FETCH_HEAD").get("version") or result["current"]
+    if head == fetched or git("merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD") is not None:
+        # Up to date, or ahead of the remote, as a development copy can be.
+        result["latest"] = result["current"]
+        return result
+    if git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD") is None:
+        result["error"] = "This copy has commits of its own; update it with git"
+        return result
+    result["available"] = True
+    log = git("log", "--format=%s", "HEAD..FETCH_HEAD") or ""
+    result["notes"] = [line for line in log.splitlines() if line][:6]
+    return result
+
+
+def write_state(state, message="", version=None):
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    tmp = STATE_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"state": state, "message": message, "version": version, "at": int(time.time())}, f)
+    os.replace(tmp, STATE_FILE)
+
+
+def notify(summary, body=""):
+    if QUIET or not shutil.which("notify-send"):
+        return
+    try:
+        subprocess.run(["notify-send", "-a", NAME, "-i", "system-software-update", summary, body],
+                       capture_output=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+
+def installed_by_omarchy():
+    """`omarchy plugin update` works on ~/.config/omarchy/plugins/<id> only."""
+    home = os.path.join(os.path.expanduser("~/.config/omarchy/plugins"), PLUGIN_ID)
+    return os.path.realpath(home) == os.path.realpath(PLUGIN_DIR)
+
+
+def last_line(text):
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    return lines[-1].removeprefix("omarchy-plugin-update: ") if lines else ""
+
+
+def fast_forward():
+    """Omarchy's updater where it applies, since it validates and rolls back."""
+    tool = shutil.which("omarchy-plugin-update")
+    if tool and installed_by_omarchy() and not QUIET:
+        try:
+            done = subprocess.run([tool, PLUGIN_ID, "--yes"], capture_output=True, text=True,
+                                  timeout=180, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError) as error:
+            raise Failure(str(error))
+        if done.returncode != 0:
+            raise Failure(last_line(done.stderr) or last_line(done.stdout) or "The update didn't go through")
+        return
+    if git("merge", "--ff-only", "FETCH_HEAD", timeout=60) is None:
+        raise Failure("The update didn't go through")
+    if not QUIET and shutil.which("omarchy-shell"):
+        subprocess.run(["omarchy-shell", "-q", "shell", "rescanPlugins"], capture_output=True, timeout=10)
+
+
+def apply():
+    write_state("updating", "Updating…")
+    before = PLUGIN.get("version")
+    stash = None
+    try:
+        if not managed():
+            raise Failure("Installed without git, so it can't update itself")
+        if not fetch():
+            raise Failure("Couldn't reach GitHub")
+        if git("rev-parse", "HEAD") == git("rev-parse", "FETCH_HEAD"):
+            write_state("done", "Already up to date.", before)
+            print(before)
+            return
+        if git("merge-base", "--is-ancestor", "HEAD", "FETCH_HEAD") is None:
+            raise Failure("This copy has commits of its own; update it with git")
+        paths = changed_paths()
+        if paths:
+            stash = "kept"
+            if matches("FETCH_HEAD", paths):
+                # Already the new version, copied in by hand: nothing to keep.
+                stash = "same"
+            # A stash is a commit; name it after the plugin when git has no identity.
+            if git("-c", "user.name=" + NAME, "-c", "user.email=plugin-update@localhost",
+                   "stash", "push", "--include-untracked", "--message",
+                   "%s: local edits set aside before updating from %s" % (NAME, before), timeout=30) is None:
+                stash = None
+                raise Failure("Local edits in the plugin folder couldn't be set aside")
+        fast_forward()
+    except Failure as error:
+        if stash:
+            # Nothing moved, so the edits go back where they were.
+            git("stash", "pop", timeout=30)
+        write_state("failed", str(error))
+        notify("%s couldn't update" % NAME, str(error))
+        raise
+    if stash == "same":
+        git("stash", "drop", timeout=30)
+    after = manifest().get("version")
+    note = " Your own edits are kept in git stash." if stash == "kept" else ""
+    write_state("done", "Updated to %s.%s" % (after, note), after)
+    notify("%s updated to %s" % (NAME, after), note.strip())
+    print(after)
+
+
+def main(args):
+    if args == ["check"]:
+        print(json.dumps(check(), separators=(",", ":")))
+    elif args == ["apply"]:
+        try:
+            apply()
+        except Failure as error:
+            print("plugin-update: " + str(error), file=sys.stderr)
+            return 1
+    else:
+        print("usage: plugin-update check | apply", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

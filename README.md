@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.1.0-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.2.0-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
@@ -17,9 +17,10 @@
 
 - **The bar shows what you pick:** a server mark with CPU and RAM by default, plus root disk, CPU temperature and network rates, or none. The mark turns urgent when the server is unreachable or something needs you.
 - **A compact panel:** CPU, RAM, root disk and temperature dials; network rates, load and running containers on one line; alerts; failed systemd services with restart; and SSH, btop, reboot and power off.
-- **More** (or `e`) expands it with CPU, memory, download and upload history graphs, system facts (OS, kernel, CPU, load, swap, tasks, uptime, reboot required), every real filesystem, Docker containers with start, stop and restart, and the top processes. It reopens the way you left it.
+- **More** (the chevron at the top, or `e`) expands it with CPU, memory, download and upload history graphs, system facts (OS, kernel, CPU, load, swap, tasks, uptime, reboot required), every real filesystem, Docker containers with start, stop and restart, and the top processes. It reopens the way you left it.
 - **Notifications:** one when the server stops answering and one when it is back, and one for each new problem: a container turning unhealthy or restart-looping, a filesystem passing 90%, a systemd unit failing. Starting the shell never notifies about what was already wrong.
 - **Nothing on the server:** every poll is one shell command reading `/proc`, `/sys`, `df`, `ps`, `docker` and `systemctl`, over a single multiplexed SSH session, so the server sees one login rather than one every few seconds.
+- **Updates from the panel:** Settings says when a new version is on GitHub and installs it with one click. Edits you made in the plugin folder are kept in `git stash`, not lost.
 - **Every monitor agrees:** the bar draws the widget once per screen; the first owns the connection, the others mirror it, and all of them read their settings straight from `shell.json`.
 - Colours, fonts, corners and spacing come from the active Omarchy theme.
 
