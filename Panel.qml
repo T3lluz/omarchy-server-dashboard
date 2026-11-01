@@ -5,9 +5,12 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
+import "Glyphs.js" as Glyphs
 
-// The dashboard: gauges, history, system facts, storage, containers, failed
-// services and processes for the connected server, plus the connect form.
+// The dashboard, drawn the way Batteries draws its devices: the server big
+// with its readings beside it, then each part with its number, then failed
+// services, and with More the containers and processes. The gear swaps them
+// for the settings and the connect form, which keep the family's panel kit.
 Panel {
   id: root
   moduleName: "io.github.t3lluz.server-dashboard"
@@ -37,6 +40,7 @@ Panel {
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property var snap: client && client.snapshot ? client.snapshot : null
+  readonly property bool configured: !!client && client.configured
   readonly property bool online: !!client && client.online && snap !== null
   readonly property string status: client ? client.status : "unconfigured"
   readonly property string errorKind: client ? client.errorKind : ""
@@ -51,9 +55,28 @@ Panel {
   readonly property var rootDisk: disks.length > 0 ? disks[0] : null
   readonly property int runningContainers: containers.filter(Model.containerRunning).length
 
+  // The server's readings: the facts beside its drawing and a row per part.
+  readonly property var facts: Model.serverFacts(online ? snap : null)
+  readonly property var parts: online ? Model.parts(snap, expanded) : []
+  // Connecting, rebooting or powering off: the server pulses until it is
+  // done, the way a device pulses in Batteries while it charges.
+  readonly property bool serverWorking: configured && ((!online && status !== "error")
+    || /^(reboot|poweroff):/.test(client.busyAction))
+
+  // The family's rhythm, as in Batteries: settings keep the kit's gaps, the
+  // dashboard gets more air around its drawings.
+  readonly property real sectionGap: Style.space(12)
+  readonly property real tileGap: Style.space(8)
+  readonly property real groupGap: Style.space(20)
+  // The gap between a name and its status line.
+  readonly property real lineGap: Style.space(3)
+  // A part's drawing runs from its reading's cap height to the baseline of
+  // the share under it.
+  readonly property real partIconSize: readingType.height + lineGap + smallType.height - capInset(readingType) - smallType.descent
+
   readonly property var actions: [
-    { key: "ssh", icon: "󰆍", text: "SSH", hint: "Open a shell on the server" },
-    { key: "btop", icon: "󰓅", text: "Monitor", hint: "Open btop (or htop/top) on the server" },
+    { key: "ssh", icon: "󰆍", text: "SSH", hint: "Open a shell on the server (t)" },
+    { key: "btop", icon: "󰓅", text: "Monitor", hint: "Open btop, or htop or top, on the server (b)" },
     { key: "reboot", icon: "󰜉", text: "Reboot", hint: "Reboot the server" },
     { key: "poweroff", icon: "󰐥", text: "Power off", hint: "Shut the server down" }
   ]
@@ -70,8 +93,9 @@ Panel {
 
   readonly property var updater: client ? client.updater : null
 
-  // The banners under the hero, as in the other plugins: a changed host key,
-  // the action running or just finished, the server's alerts, an update.
+  // The banners at the top of the dashboard, as in the other plugins: a
+  // changed host key, the action running or just finished, the server's
+  // alerts, an update.
   readonly property var notices: {
     var list = []
     if (!client) return list
@@ -104,19 +128,13 @@ Panel {
     return keys
   }
 
-  readonly property var infoRows: {
-    if (!online) return []
-    var rows = []
-    if (snap.osName) rows.push({ label: "OS", value: snap.osName })
-    if (snap.kernel) rows.push({ label: "Kernel", value: snap.kernel + (snap.arch ? " · " + snap.arch : "") })
-    if (snap.cpuModel || snap.cores) rows.push({ label: "CPU", value: (snap.cpuModel || "CPU") + (snap.cores ? " · " + snap.cores + " threads" : "") })
-    if (snap.load) rows.push({ label: "Load", value: snap.load.one.toFixed(2) + "  " + snap.load.five.toFixed(2) + "  " + snap.load.fifteen.toFixed(2) })
-    if (snap.memory && snap.memory.swapTotalBytes > 0) rows.push({ label: "Swap", value: Model.bytes(snap.memory.swapUsedBytes) + " / " + Model.bytes(snap.memory.swapTotalBytes) })
-    if (snap.load && snap.load.total) rows.push({ label: "Tasks", value: snap.load.total + " (" + snap.load.running + " running)" })
-    rows.push({ label: "Uptime", value: Model.uptime(snap.uptimeSeconds) })
-    rows.push({ label: "Login", value: (snap.user || Model.targetUser(client.target)) + "@" + Model.targetHost(client.target) })
-    if (snap.rebootRequired) rows.push({ label: "Updates", value: "Reboot required", urgent: true })
-    return rows
+  // How far below a line's top its capitals start.
+  function capInset(metrics) { return metrics.ascent - metrics.tightBoundingRect("H").height }
+
+  // Width over height of what a drawing draws (Glyphs.js).
+  function inkAspect(name) {
+    var ink = Glyphs.glyphs[name].ink
+    return (ink[2] - ink[0]) / (ink[3] - ink[1])
   }
 
   function open() { root.controller.show() }
@@ -128,13 +146,25 @@ Panel {
     return false
   }
 
-  function heat(value, warm, hot) { return Model.level(value, warm, hot) }
-
   function heroMeta() {
-    if (!client || !client.configured) return "Connect a server over SSH"
-    if (online) return (snap.osName || "Linux") + " · up " + Model.uptime(snap.uptimeSeconds)
-    if (status === "error") return client.errorText
-    return "Connecting to " + client.target + "…"
+    if (setupOpen && configured) return "Changes save as you make them"
+    if (!configured) return "Connect a server over SSH"
+    if (online) {
+      var count = client.alertCount
+      return (snap.osName || "Linux") + " · " + (count === 0 ? "all clear" : count + (count === 1 ? " alert" : " alerts"))
+    }
+    if (status === "error") return "Offline"
+    return "Connecting to " + Model.targetHost(client.target)
+  }
+
+  // What the server is doing, a part per line beside its drawing.
+  function serverStatus() {
+    if (!configured) return ""
+    if (client.busyAction.indexOf("reboot:") === 0) return "Rebooting"
+    if (client.busyAction.indexOf("poweroff:") === 0) return "Powering off"
+    if (online) return "Online" + (snap.uptimeSeconds > 0 ? "\nUp " + Model.uptimeLong(snap.uptimeSeconds) : "")
+    if (status === "error") return "Offline\n" + client.errorText
+    return "Connecting\nOpening an SSH session"
   }
 
   function moveCursor(delta) {
@@ -150,6 +180,13 @@ Panel {
     keyboardCursor = false
     cursorActive = true
     cursorKey = key
+  }
+
+  // The pointer left what it lit, inside the panel or out of it. The key
+  // stays, so j and k pick up from there; a keyboard move since keeps its
+  // own highlight.
+  function unhover(key) {
+    if (!keyboardCursor && cursorKey === key) cursorActive = false
   }
 
   function activateCursor() {
@@ -187,13 +224,6 @@ Panel {
   // Remembered in shell.json so the panel reopens the way it was left.
   function toggleExpanded() {
     setOption("panelExpanded", !expanded)
-  }
-
-  function summaryText() {
-    if (!online) return ""
-    var parts = ["󰇚 " + Model.rate(snap.rxRate), "󰕒 " + Model.rate(snap.txRate)]
-    if (containers.length > 0) parts.push("󰡨 " + runningContainers + "/" + containers.length)
-    return parts.join("   ")
   }
 
   function alertText() {
@@ -293,10 +323,12 @@ Panel {
       if (showSetup) client.refreshPeers()
     }
     Qt.callLater(function() {
-      if (root.showSetup && !(root.client && root.client.configured)) targetField.forceActiveFocus()
+      if (root.showSetup && !root.configured) targetField.forceActiveFocus()
       else keyCatcher.forceActiveFocus()
     })
   }
+
+  onSetupOpenChanged: if (panelFlick) panelFlick.contentY = 0
 
   onShowSetupChanged: {
     if (showSetup && client) {
@@ -310,6 +342,108 @@ Panel {
       cursorKey = cursorTargets.length > 0 ? cursorTargets[0] : ""
   }
 
+  // One part of the server: its drawing and name on the left, and on the
+  // right its reading over the share in use. The drawing runs from the
+  // reading's cap height to the share's baseline, in a column as wide as
+  // the memory stick needs, so every name starts at the same place.
+  component PartRow: Item {
+    id: partRow
+    property var part: null
+    readonly property color tone: part && part.hot ? root.urgent : root.foreground
+
+    width: parent ? parent.width : 0
+    height: Math.max(partValues.implicitHeight, partName.implicitHeight)
+
+    DeviceGlyph {
+      id: partGlyph
+      x: Style.space(2)
+      y: root.capInset(readingType)
+      width: Math.round(root.partIconSize * 1.5)
+      height: root.partIconSize
+      name: partRow.part ? partRow.part.glyph : "cpu"
+      color: root.foreground
+    }
+
+    Text {
+      id: partName
+      anchors.left: partGlyph.right
+      anchors.leftMargin: Style.space(16)
+      anchors.right: partValues.left
+      anchors.rightMargin: Style.space(12)
+      anchors.verticalCenter: partGlyph.verticalCenter
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      text: partRow.part ? partRow.part.name : ""
+      color: root.foreground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.subtitle
+    }
+
+    Column {
+      id: partValues
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(2)
+      spacing: root.lineGap
+
+      Text {
+        anchors.right: parent.right
+        textFormat: Text.PlainText
+        text: partRow.part ? partRow.part.detail : ""
+        color: partRow.part && partRow.part.detail === "--" ? root.dim : partRow.tone
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.title
+        font.bold: true
+      }
+
+      Text {
+        anchors.right: parent.right
+        textFormat: Text.PlainText
+        text: partRow.part ? partRow.part.share : ""
+        color: partRow.part && partRow.part.hot ? root.urgent : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+    }
+  }
+
+  // A group's name in bold with what it holds on the right, the way
+  // Batteries heads its AirPods.
+  component GroupHeader: Item {
+    id: groupHeader
+    property string title: ""
+    property string detail: ""
+    property color titleColor: root.foreground
+
+    width: parent ? parent.width : 0
+    height: Math.max(groupTitle.implicitHeight, groupDetail.implicitHeight)
+
+    Text {
+      id: groupTitle
+      x: Style.space(2)
+      textFormat: Text.PlainText
+      text: groupHeader.title
+      color: groupHeader.titleColor
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.title
+      font.bold: true
+    }
+
+    Text {
+      id: groupDetail
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(2)
+      anchors.baseline: groupTitle.baseline
+      width: parent.width - groupTitle.implicitWidth - Style.space(20)
+      horizontalAlignment: Text.AlignRight
+      wrapMode: Text.WordWrap
+      textFormat: Text.PlainText
+      text: groupHeader.detail
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
   KeyboardPanel {
     id: panel
     anchorItem: root.anchorItem
@@ -317,7 +451,7 @@ Panel {
     bar: root.bar
     open: root.opened
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(root.showDetails ? 460 : 380))
+    contentWidth: panel.fittedContentWidth(Style.space(380))
     contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(760))
 
     PanelKeyCatcher {
@@ -359,69 +493,23 @@ Panel {
         Column {
           id: column
           width: panelFlick.width
-          spacing: Style.space(12)
+          spacing: Style.space(14)
 
-          // ---------------------------------------------------------- hero
           PanelHero {
             id: hero
             width: parent.width
-            title: root.setupOpen && root.client && root.client.configured ? "Settings" : root.displayName
-            meta: root.setupOpen && root.client && root.client.configured ? "Changes save as you make them" : root.heroMeta()
+            title: root.setupOpen && root.configured ? "Settings" : root.displayName
+            meta: root.heroMeta()
             foreground: root.foreground
             fontFamily: root.fontFamily
-            // Online or not shows as a dot on the server, as on the bar
-            // icon; the line under the title says what is going on.
             iconComponent: Component {
-              Item {
-                implicitWidth: serverGlyph.implicitWidth
-                implicitHeight: serverGlyph.implicitHeight
-
-                Text {
-                  id: serverGlyph
-                  textFormat: Text.PlainText
-                  text: "󰒋"
-                  color: root.status === "error" && root.client && !root.client.needsUser ? root.urgent : root.foreground
-                  opacity: root.online ? 1 : 0.55
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.display
-                }
-
-                Rectangle {
-                  id: statusDot
-                  readonly property bool connecting: !!root.client && root.client.configured && !root.online && root.status !== "error"
-                  visible: !!root.client && root.client.configured
-                  width: Math.max(8, Style.space(10))
-                  height: width
-                  radius: width / 2
-                  anchors.right: parent.right
-                  anchors.bottom: parent.bottom
-                  anchors.bottomMargin: Style.space(4)
-                  color: root.online ? root.accent : (root.status === "error" ? root.urgent : root.dim)
-                  border.width: Math.max(2, Style.space(2))
-                  border.color: Commons.Color.popups.background
-
-                  SequentialAnimation on opacity {
-                    running: statusDot.connecting
-                    loops: Animation.Infinite
-                    onStopped: statusDot.opacity = 1
-                    NumberAnimation { from: 1; to: 0.25; duration: 600 }
-                    NumberAnimation { from: 0.25; to: 1; duration: 600 }
-                  }
-
-                  PanelToolTip {
-                    visible: dotMouse.containsMouse
-                    text: root.online ? "Online" : (root.status === "error" ? "Offline" : "Connecting")
-                    fontFamily: root.fontFamily
-                  }
-
-                  MouseArea {
-                    id: dotMouse
-                    anchors.fill: parent
-                    anchors.margins: -Style.space(4)
-                    hoverEnabled: true
-                    acceptedButtons: Qt.NoButton
-                  }
-                }
+              Text {
+                textFormat: Text.PlainText
+                text: "󰒋"
+                color: root.status === "error" && root.client && !root.client.needsUser ? root.urgent : root.foreground
+                opacity: root.online || !root.configured ? 1 : 0.55
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.display
               }
             }
             trailingControl: Component {
@@ -431,14 +519,14 @@ Panel {
                 PanelActionButton {
                   visible: root.online && !root.setupOpen
                   iconText: root.expanded ? "󰅃" : "󰅀"
-                  tooltipText: root.expanded ? "Less (e)" : "More: graphs, storage, containers and processes (e)"
+                  tooltipText: root.expanded ? "Less (e)" : "More: every disk, containers and processes (e)"
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.toggleExpanded()
                 }
 
                 PanelActionButton {
-                  visible: !!root.client && root.client.configured && !root.setupOpen
+                  visible: root.configured && !root.setupOpen
                   iconText: "󰑐"
                   tooltipText: "Refresh (r)"
                   foreground: root.foreground
@@ -457,37 +545,331 @@ Panel {
             }
           }
 
-          // --------------------------------------------------------- banners
-          Repeater {
-            model: root.notices
+          PanelSeparator { foreground: root.foreground }
 
-            Notice {
-              required property var modelData
-              width: column.width
-              icon: modelData.icon
-              text: modelData.text
-              tone: modelData.tone
-              actionLabel: modelData.actionLabel || ""
-              busy: !!modelData.busy
-              dismissable: !!modelData.dismissable
+          // ======================================================= dashboard
+          // Roomier than the settings: the drawings need air around them.
+          Column {
+            visible: !root.showSetup
+            width: parent.width
+            spacing: root.groupGap
+
+            Repeater {
+              model: root.notices
+
+              Notice {
+                required property var modelData
+                width: parent ? parent.width : 0
+                icon: modelData.icon
+                text: modelData.text
+                tone: modelData.tone
+                actionLabel: modelData.actionLabel || ""
+                busy: !!modelData.busy
+                dismissable: !!modelData.dismissable
+                foreground: root.foreground
+                accent: root.accent
+                urgent: root.urgent
+                fontFamily: root.fontFamily
+                onActioned: root.noticeAction(modelData)
+                onDismissed: root.dismissNotice(modelData)
+              }
+            }
+
+            // Type measured once, so drawings can line up with text: from the
+            // cap height of a first line to the baseline of a last.
+            FontMetrics { id: statusType; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle }
+            FontMetrics { id: readingType; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
+            FontMetrics { id: smallType; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
+
+            // ------------------------------------------------------- server
+            // The server drawn as tall as what it is doing and its readings
+            // beside it, as Batteries draws the laptop.
+            Item {
+              visible: root.configured
+              width: parent.width
+              height: serverInfo.implicitHeight
+
+              // From the status's cap height to the last row's baseline, in
+              // the drawing's own proportions. The readings have a fixed
+              // width, so the drawing can size from their height without a
+              // loop; past the room left it shrinks and centres.
+              Item {
+                id: serverArt
+                readonly property real aspect: root.inkAspect("server")
+                readonly property real span: serverInfo.implicitHeight - root.capInset(statusType) - smallType.descent
+                readonly property real room: parent.width - serverInfo.width - Style.space(20) - x
+                x: Style.space(2)
+                width: Math.min(room, Math.round(span * aspect))
+                height: Math.round(width / aspect)
+                y: root.capInset(statusType) + (span - height) / 2
+
+                PulseGlyph {
+                  anchors.fill: parent
+                  active: root.serverWorking
+                  opacity: root.online || root.serverWorking ? 1 : 0.6
+                  glyph: Component { DeviceGlyph { name: "server"; color: root.foreground } }
+                }
+              }
+
+              Column {
+                id: serverInfo
+                anchors.right: parent.right
+                anchors.rightMargin: Style.space(2)
+                width: Style.space(156)
+                spacing: Style.space(4)
+
+                Text {
+                  width: parent.width
+                  bottomPadding: Style.space(4)
+                  textFormat: Text.PlainText
+                  wrapMode: Text.Wrap
+                  text: root.serverStatus()
+                  color: root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.subtitle
+                }
+
+                // Label on the left, reading on the right: the network, the
+                // containers and the system.
+                Repeater {
+                  model: root.facts
+
+                  Item {
+                    required property var modelData
+                    width: serverInfo.width
+                    height: Math.max(factLabel.implicitHeight, factValue.implicitHeight)
+
+                    Text {
+                      id: factLabel
+                      textFormat: Text.PlainText
+                      text: modelData.label
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      id: factValue
+                      anchors.right: parent.right
+                      width: Math.min(implicitWidth, parent.width - factLabel.implicitWidth - Style.space(10))
+                      horizontalAlignment: Text.AlignRight
+                      wrapMode: Text.Wrap
+                      textFormat: Text.PlainText
+                      text: modelData.value
+                      color: modelData.value === "--" ? root.dim : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                    }
+                  }
+                }
+              }
+            }
+
+            Caption {
+              visible: root.configured && root.status === "error" && root.errorKind !== "hostkey"
+              width: parent.width
+              leftPadding: Style.space(2)
+              wrapMode: Text.WordWrap
+              text: "Retrying every 30 seconds. Press r to try now."
               foreground: root.foreground
-              accent: root.accent
-              urgent: root.urgent
               fontFamily: root.fontFamily
-              onActioned: root.noticeAction(modelData)
-              onDismissed: root.dismissNotice(modelData)
+            }
+
+            // -------------------------------------------------------- parts
+            PanelSeparator { visible: root.parts.length > 0; foreground: root.foreground }
+
+            Column {
+              visible: root.parts.length > 0
+              width: parent.width
+              spacing: root.groupGap
+
+              Repeater {
+                model: root.parts
+
+                PartRow {
+                  required property var modelData
+                  part: modelData
+                }
+              }
+            }
+
+            // ----------------------------------------------- failed services
+            PanelSeparator { visible: root.failedUnits.length > 0; foreground: root.foreground }
+
+            Column {
+              visible: root.failedUnits.length > 0
+              width: parent.width
+              spacing: Style.space(12)
+
+              GroupHeader {
+                title: "Failed services"
+                titleColor: root.urgent
+                detail: root.failedUnits.length + " failed"
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+
+                Repeater {
+                  model: root.failedUnits
+
+                  UnitRow {
+                    required property var modelData
+                    required property int index
+                    width: parent ? parent.width : 0
+                    unit: modelData
+                    rowKey: "u:" + index
+                  }
+                }
+              }
+            }
+
+            // --------------------------------------------------- containers
+            PanelSeparator { visible: root.showDetails && root.containers.length > 0; foreground: root.foreground }
+
+            Column {
+              visible: root.showDetails && root.containers.length > 0
+              width: parent.width
+              spacing: Style.space(12)
+
+              GroupHeader {
+                title: "Containers"
+                detail: root.runningContainers + " of " + root.containers.length + " running"
+              }
+
+              Column {
+                width: parent.width
+                spacing: Style.space(2)
+
+                Repeater {
+                  model: root.containers
+
+                  ContainerRow {
+                    required property var modelData
+                    required property int index
+                    width: parent ? parent.width : 0
+                    container: modelData
+                    rowKey: "c:" + index
+                  }
+                }
+              }
+            }
+
+            // ---------------------------------------------------- processes
+            PanelSeparator { visible: root.showDetails && root.processes.length > 0; foreground: root.foreground }
+
+            Column {
+              visible: root.showDetails && root.processes.length > 0
+              width: parent.width
+              spacing: Style.space(18)
+
+              GroupHeader {
+                title: "Processes"
+                detail: "CPU and memory"
+              }
+
+              // Label on the left, readings on the right, as beside the
+              // server.
+              Column {
+                width: parent.width
+                spacing: Style.space(4)
+
+                Repeater {
+                  model: root.processes
+
+                  Item {
+                    required property var modelData
+                    width: parent ? parent.width : 0
+                    height: Math.max(procName.implicitHeight, procCpu.implicitHeight)
+
+                    Text {
+                      id: procName
+                      x: Style.space(2)
+                      width: procCpu.x - x - Style.space(10)
+                      textFormat: Text.PlainText
+                      wrapMode: Text.Wrap
+                      text: modelData.name
+                      color: root.dim
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                    }
+
+                    Text {
+                      id: procCpu
+                      anchors.right: procMem.left
+                      width: Style.space(56)
+                      horizontalAlignment: Text.AlignRight
+                      textFormat: Text.PlainText
+                      text: modelData.cpu.toFixed(1) + "%"
+                      color: modelData.cpu >= 80 ? root.urgent : root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                    }
+
+                    Text {
+                      id: procMem
+                      anchors.right: parent.right
+                      anchors.rightMargin: Style.space(2)
+                      width: Style.space(72)
+                      horizontalAlignment: Text.AlignRight
+                      textFormat: Text.PlainText
+                      text: Model.size(modelData.rssBytes)
+                      color: root.foreground
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.bodySmall
+                      font.bold: true
+                    }
+                  }
+                }
+              }
+            }
+
+            // ------------------------------------------------------ actions
+            PanelSeparator { visible: root.online; foreground: root.foreground }
+
+            // One row, four equal buttons, unboxed like the rest of the view.
+            Row {
+              id: actionRow
+              visible: root.online
+              width: parent.width
+              spacing: Style.space(4)
+
+              Repeater {
+                model: root.actions
+
+                Button {
+                  id: actionButton
+                  required property var modelData
+                  required property int index
+                  readonly property string key: "a:" + index
+                  width: (actionRow.width - actionRow.spacing * (root.actions.length - 1)) / root.actions.length
+                  text: modelData.text
+                  iconText: modelData.icon
+                  fontSize: Style.font.bodySmall
+                  iconSize: Style.font.body
+                  tooltipText: modelData.hint
+                  hasCursor: root.cursorActive && root.cursorKey === key
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  enabled: !(root.client && root.client.busyAction !== "" && (modelData.key === "reboot" || modelData.key === "poweroff"))
+                  onHovered: function(on) { if (on) root.hover(actionButton.key); else root.unhover(actionButton.key) }
+                  onClicked: root.runAction(modelData.key)
+                }
+              }
             }
           }
 
-          // ------------------------------------------------------ bar options
+          // ======================================================== settings
           Column {
-            visible: root.showSetup && !!root.client && root.client.configured
+            visible: root.showSetup
             width: parent.width
-            spacing: Style.space(12)
-
-            PanelSeparator { foreground: root.foreground }
+            spacing: root.sectionGap
 
             SectionHeader {
+              visible: root.configured
               icon: "󰍜"
               title: "SHOW IN THE BAR"
               detail: root.barPickedCount > 0 ? root.barPickedCount + " SHOWN" : "ICON ONLY"
@@ -497,10 +879,11 @@ Panel {
 
             Grid {
               id: barGrid
+              visible: root.configured
               width: parent.width
               columns: 2
-              columnSpacing: Style.space(8)
-              rowSpacing: Style.space(8)
+              columnSpacing: root.tileGap
+              rowSpacing: root.tileGap
 
               readonly property real tileWidth: (width - columnSpacing) / 2
 
@@ -523,9 +906,10 @@ Panel {
               }
             }
 
-            PanelSeparator { foreground: root.foreground }
+            PanelSeparator { visible: root.configured; foreground: root.foreground }
 
             SectionHeader {
+              visible: root.configured
               icon: "󰂚"
               title: "ALERTS AND PANEL"
               foreground: root.foreground
@@ -533,6 +917,7 @@ Panel {
             }
 
             SwitchRow {
+              visible: root.configured
               icon: "󰂚"
               label: "Notify me"
               hint: "When the server drops or comes back, a container turns unhealthy, a disk passes 90% or a service fails"
@@ -544,627 +929,176 @@ Panel {
             }
 
             SwitchRow {
+              visible: root.configured
               icon: "󰁌"
               label: "Open expanded"
-              hint: "Graphs, storage, containers and processes without pressing More"
+              hint: "Every disk, containers and processes without pressing More"
               checked: root.expanded
               foreground: root.foreground
               accent: root.accent
               fontFamily: root.fontFamily
               onToggled: root.setOption("panelExpanded", !root.expanded)
             }
-          }
 
-          // ---------------------------------------------------- connect form
-          Column {
-            id: setupForm
-            visible: root.showSetup
-            width: parent.width
-            spacing: Style.space(8)
+            PanelSeparator { visible: root.configured; foreground: root.foreground }
 
-            PanelSeparator { foreground: root.foreground }
-
-            SectionHeader {
-              icon: "󰌘"
-              title: root.client && root.client.configured ? "CONNECTION" : "CONNECT A SERVER"
-              detail: root.client && root.client.configured ? Model.targetHost(root.client.target).toUpperCase() : ""
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Notice {
-              visible: root.status === "error" && ["auth", "nopassword", "keyring"].indexOf(root.errorKind) !== -1
-              tone: root.errorKind === "nopassword" ? "accent" : "urgent"
-              icon: root.errorKind === "nopassword" ? "󰌋" : "󰀦"
-              text: root.client ? root.client.errorText : ""
-              foreground: root.foreground
-              accent: root.accent
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
-
-            Row {
+            // ---------------------------------------------------- connect form
+            Column {
+              id: setupForm
               width: parent.width
               spacing: Style.space(8)
 
-              TextField {
-                id: targetField
-                width: parent.width - portField.width - parent.spacing
+              SectionHeader {
+                icon: "󰌘"
+                title: root.configured ? "CONNECTION" : "CONNECT A SERVER"
+                detail: root.configured ? Model.targetHost(root.client.target).toUpperCase() : ""
                 foreground: root.foreground
-                font.family: root.fontFamily
-                placeholderText: "user@host"
-                onAccepted: passwordField.forceActiveFocus()
-                Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                fontFamily: root.fontFamily
+              }
+
+              Notice {
+                visible: root.status === "error" && ["auth", "nopassword", "keyring"].indexOf(root.errorKind) !== -1
+                tone: root.errorKind === "nopassword" ? "accent" : "urgent"
+                icon: root.errorKind === "nopassword" ? "󰌋" : "󰀦"
+                text: root.client ? root.client.errorText : ""
+                foreground: root.foreground
+                accent: root.accent
+                urgent: root.urgent
+                fontFamily: root.fontFamily
+              }
+
+              Row {
+                width: parent.width
+                spacing: Style.space(8)
+
+                TextField {
+                  id: targetField
+                  width: parent.width - portField.width - parent.spacing
+                  foreground: root.foreground
+                  font.family: root.fontFamily
+                  placeholderText: "user@host"
+                  onAccepted: passwordField.forceActiveFocus()
+                  Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                }
+
+                TextField {
+                  id: portField
+                  width: Style.space(70)
+                  foreground: root.foreground
+                  font.family: root.fontFamily
+                  placeholderText: "22"
+                  inputMethodHints: Qt.ImhDigitsOnly
+                  validator: IntValidator { bottom: 1; top: 65535 }
+                  onAccepted: root.submitSetup()
+                  Keys.onEscapePressed: keyCatcher.forceActiveFocus()
+                }
               }
 
               TextField {
-                id: portField
-                width: Style.space(70)
+                id: passwordField
+                width: parent.width
+                password: true
                 foreground: root.foreground
                 font.family: root.fontFamily
-                placeholderText: "22"
-                inputMethodHints: Qt.ImhDigitsOnly
-                validator: IntValidator { bottom: 1; top: 65535 }
+                placeholderText: root.configured && root.errorKind !== "nopassword"
+                  ? "Password (leave empty to keep the saved one)"
+                  : "Password, stored in your keyring"
                 onAccepted: root.submitSetup()
                 Keys.onEscapePressed: keyCatcher.forceActiveFocus()
               }
-            }
 
-            TextField {
-              id: passwordField
-              width: parent.width
-              password: true
-              foreground: root.foreground
-              font.family: root.fontFamily
-              placeholderText: root.client && root.client.configured && root.errorKind !== "nopassword"
-                ? "Password (leave empty to keep the saved one)"
-                : "Password, stored in your keyring"
-              onAccepted: root.submitSetup()
-              Keys.onEscapePressed: keyCatcher.forceActiveFocus()
-            }
+              Notice {
+                id: formError
+                visible: text !== ""
+                tone: "urgent"
+                icon: "󰀦"
+                foreground: root.foreground
+                accent: root.accent
+                urgent: root.urgent
+                fontFamily: root.fontFamily
+              }
 
-            Notice {
-              id: formError
-              visible: text !== ""
-              tone: "urgent"
-              icon: "󰀦"
-              foreground: root.foreground
-              accent: root.accent
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
+              Caption {
+                visible: !!root.client && root.client.peers.length > 0
+                width: parent.width
+                text: "Tailscale machines"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
 
-            Caption {
-              visible: !!root.client && root.client.peers.length > 0
-              width: parent.width
-              text: "Tailscale machines"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
+              Flow {
+                visible: !!root.client && root.client.peers.length > 0
+                width: parent.width
+                spacing: Style.space(6)
 
-            Flow {
-              visible: root.client && root.client.peers.length > 0
-              width: parent.width
-              spacing: Style.space(6)
+                Repeater {
+                  model: root.client ? root.client.peers : []
 
-              Repeater {
-                model: root.client ? root.client.peers : []
+                  Button {
+                    required property var modelData
+                    text: modelData.name
+                    iconText: modelData.os === "linux" ? "󰌽" : (modelData.os === "windows" ? "󰖳" : "󰄜")
+                    tooltipText: modelData.ip + (modelData.online ? "" : " · offline")
+                    bordered: true
+                    opacity: modelData.online ? 1 : 0.5
+                    fontSize: Style.font.bodySmall
+                    iconSize: Style.font.bodySmall
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    onClicked: root.fillPeer(modelData)
+                  }
+                }
+              }
+
+              Row {
+                spacing: Style.space(8)
 
                 Button {
-                  required property var modelData
-                  text: modelData.name
-                  iconText: modelData.os === "linux" ? "󰌽" : (modelData.os === "windows" ? "󰖳" : "󰄜")
-                  tooltipText: modelData.ip + (modelData.online ? "" : " · offline")
+                  text: "Connect"
+                  iconText: "󰌘"
                   bordered: true
-                  opacity: modelData.online ? 1 : 0.5
-                  fontSize: Style.font.bodySmall
-                  iconSize: Style.font.bodySmall
                   foreground: root.foreground
                   fontFamily: root.fontFamily
-                  onClicked: root.fillPeer(modelData)
+                  onClicked: root.submitSetup()
                 }
-              }
-            }
 
-            Row {
-              spacing: Style.space(8)
-
-              Button {
-                text: "Connect"
-                iconText: "󰌘"
-                bordered: true
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.submitSetup()
-              }
-
-              Button {
-                visible: !!root.client && root.client.configured
-                text: "Forget password"
-                iconText: "󰅖"
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: {
-                  root.client.forget()
-                  passwordField.forceActiveFocus()
-                }
-              }
-            }
-          }
-
-          // ------------------------------------------------- about and updates
-          PanelSeparator { visible: root.showSetup; foreground: root.foreground }
-
-          UpdateSection {
-            visible: root.showSetup
-            icon: "󰚰"
-            name: "Server Dashboard"
-            version: root.updater ? root.updater.version : ""
-            line: root.updater ? root.updater.line : ""
-            available: !!root.updater && root.updater.available
-            checking: !!root.updater && root.updater.checking
-            busy: !!root.updater && root.updater.busy
-            managed: !root.updater || root.updater.managed
-            notes: root.updater ? root.updater.notes : []
-            showAutoCheck: true
-            autoCheck: root.setting("autoUpdateCheck", true) === true
-            foreground: root.foreground
-            accent: root.accent
-            fontFamily: root.fontFamily
-            onVisibleChanged: if (visible && root.updater && !root.updater.check && !root.updater.checking) root.updater.checkNow()
-            onCheckRequested: root.updater.checkNow()
-            onApplyRequested: root.updater.apply()
-            onAutoCheckToggled: root.setOption("autoUpdateCheck", !autoCheck)
-          }
-
-          // ------------------------------------------------------- unreachable
-          Caption {
-            visible: !root.showSetup && !!root.client && root.client.configured && !root.online
-              && root.errorKind !== "hostkey"
-            width: parent.width
-            topPadding: Style.space(6)
-            bottomPadding: Style.space(6)
-            text: root.status === "error"
-              ? "Retrying every 30 seconds. Press r to try now."
-              : "Opening an SSH session…"
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            horizontalAlignment: Text.AlignHCenter
-          }
-
-          // ------------------------------------------------------------ gauges
-          Row {
-            id: gauges
-            visible: root.online && !root.showSetup
-            width: parent.width
-            spacing: Style.space(8)
-            readonly property int count: root.snap && root.snap.cpuTemp !== null ? 4 : 3
-            readonly property real cell: (width - spacing * (count - 1)) / count
-
-            Gauge {
-              width: gauges.cell
-              height: Math.min(gauges.cell, Style.space(104))
-              label: "CPU"
-              percent: root.snap && root.snap.cpuPercent !== null ? root.snap.cpuPercent : -1
-              heat: root.heat(percent, 70, 90)
-              subText: root.snap && root.snap.load ? "load " + root.snap.load.one.toFixed(2) : ""
-              foreground: root.foreground
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
-
-            Gauge {
-              width: gauges.cell
-              height: Math.min(gauges.cell, Style.space(104))
-              label: "RAM"
-              percent: root.snap && root.snap.memory ? root.snap.memory.percent : -1
-              heat: root.heat(percent, 80, 92)
-              subText: root.snap && root.snap.memory ? Model.bytes(root.snap.memory.usedBytes) + "/" + Model.bytes(root.snap.memory.totalBytes) : ""
-              foreground: root.foreground
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
-
-            Gauge {
-              width: gauges.cell
-              height: Math.min(gauges.cell, Style.space(104))
-              label: "DISK"
-              percent: root.rootDisk ? root.rootDisk.percent : -1
-              heat: root.heat(percent, 80, 92)
-              subText: root.rootDisk ? Model.bytes(root.rootDisk.usedBytes) + "/" + Model.bytes(root.rootDisk.totalBytes) : ""
-              foreground: root.foreground
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
-
-            Gauge {
-              visible: gauges.count === 4
-              width: gauges.cell
-              height: Math.min(gauges.cell, Style.space(104))
-              label: "TEMP"
-              // A 100 °C scale reads naturally as a dial.
-              percent: root.snap && root.snap.cpuTemp !== null ? Math.min(100, root.snap.cpuTemp) : -1
-              valueText: root.snap ? Model.temperature(root.snap.cpuTemp) : "—"
-              heat: root.heat(root.snap ? root.snap.cpuTemp : null, 70, 85)
-              subText: "cpu"
-              foreground: root.foreground
-              urgent: root.urgent
-              fontFamily: root.fontFamily
-            }
-          }
-
-          // ----------------------------------------------------------- summary
-          Column {
-            visible: root.online && !root.showSetup
-            width: parent.width
-            spacing: Style.space(4)
-
-            Text {
-              width: parent.width
-              textFormat: Text.PlainText
-              text: root.summaryText()
-              color: root.dim
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              horizontalAlignment: Text.AlignHCenter
-              elide: Text.ElideRight
-            }
-          }
-
-          // ---------------------------------------------------------- activity
-          Grid {
-            id: activity
-            visible: root.showDetails
-            width: parent.width
-            columns: 2
-            columnSpacing: Style.space(12)
-            rowSpacing: Style.space(10)
-            readonly property real cell: (width - columnSpacing) / 2
-
-            Sparkline {
-              width: activity.cell
-              label: "CPU"
-              glyph: "󰓅"
-              valueText: root.snap ? Model.percent(root.snap.cpuPercent) : "—"
-              values: root.client ? root.client.cpuHistory : []
-              capacity: root.client ? root.client.historyLength : 60
-              foreground: root.foreground
-              lineColor: root.accent
-              fontFamily: root.fontFamily
-            }
-
-            Sparkline {
-              width: activity.cell
-              label: "Memory"
-              glyph: "󰍛"
-              valueText: root.snap && root.snap.memory ? Model.percent(root.snap.memory.percent) : "—"
-              values: root.client ? root.client.memHistory : []
-              capacity: root.client ? root.client.historyLength : 60
-              foreground: root.foreground
-              lineColor: root.accent
-              fontFamily: root.fontFamily
-            }
-
-            Sparkline {
-              width: activity.cell
-              label: "Download"
-              glyph: "󰇚"
-              maxValue: 0
-              valueText: root.snap ? Model.rate(root.snap.rxRate) : "—"
-              values: root.client ? root.client.rxHistory : []
-              capacity: root.client ? root.client.historyLength : 60
-              foreground: root.foreground
-              lineColor: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Sparkline {
-              width: activity.cell
-              label: "Upload"
-              glyph: "󰕒"
-              maxValue: 0
-              valueText: root.snap ? Model.rate(root.snap.txRate) : "—"
-              values: root.client ? root.client.txHistory : []
-              capacity: root.client ? root.client.historyLength : 60
-              foreground: root.foreground
-              lineColor: root.foreground
-              fontFamily: root.fontFamily
-            }
-          }
-
-          // ------------------------------------------------------------ system
-          PanelSeparator { visible: root.showDetails; foreground: root.foreground }
-
-          Column {
-            visible: root.showDetails
-            width: parent.width
-            spacing: Style.space(12)
-
-            SectionHeader {
-              icon: "󰒋"
-              title: "SYSTEM"
-              detail: root.snap && root.snap.hostname ? String(root.snap.hostname).toUpperCase() : ""
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              width: parent.width
-              spacing: Style.space(6)
-
-              Repeater {
-                model: root.infoRows
-
-                Row {
-                  required property var modelData
-                  width: parent.width
-                  spacing: Style.space(8)
-
-                  Text {
-                    width: Style.space(64)
-                    textFormat: Text.PlainText
-                    text: modelData.label
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                  }
-
-                  Text {
-                    width: parent.width - Style.space(72)
-                    textFormat: Text.PlainText
-                    text: modelData.value
-                    color: modelData.urgent ? root.urgent : root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    elide: Text.ElideRight
+                Button {
+                  visible: root.configured
+                  text: "Forget password"
+                  iconText: "󰅖"
+                  foreground: root.foreground
+                  fontFamily: root.fontFamily
+                  onClicked: {
+                    root.client.forget()
+                    passwordField.forceActiveFocus()
                   }
                 }
               }
             }
-          }
 
-          // ----------------------------------------------------------- storage
-          PanelSeparator { visible: root.disks.length > 0 && root.showDetails; foreground: root.foreground }
+            // -------------------------------------------- about and updates
+            PanelSeparator { foreground: root.foreground }
 
-          Column {
-            visible: root.disks.length > 0 && root.showDetails
-            width: parent.width
-            spacing: Style.space(12)
-
-            SectionHeader {
-              icon: "󰋊"
-              title: "STORAGE"
-              detail: root.disks.length + (root.disks.length === 1 ? " DISK" : " DISKS")
+            UpdateSection {
+              icon: "󰚰"
+              name: "Server Dashboard"
+              version: root.updater ? root.updater.version : ""
+              line: root.updater ? root.updater.line : ""
+              available: !!root.updater && root.updater.available
+              checking: !!root.updater && root.updater.checking
+              busy: !!root.updater && root.updater.busy
+              managed: !root.updater || root.updater.managed
+              notes: root.updater ? root.updater.notes : []
+              showAutoCheck: true
+              autoCheck: root.setting("autoUpdateCheck", true) === true
               foreground: root.foreground
+              accent: root.accent
               fontFamily: root.fontFamily
+              onVisibleChanged: if (visible && root.updater && !root.updater.check && !root.updater.checking) root.updater.checkNow()
+              onCheckRequested: root.updater.checkNow()
+              onApplyRequested: root.updater.apply()
+              onAutoCheckToggled: root.setOption("autoUpdateCheck", !autoCheck)
             }
-
-            Column {
-              width: parent.width
-              spacing: Style.space(8)
-
-              Repeater {
-                model: root.disks
-
-                Column {
-                  required property var modelData
-                  width: parent.width
-                  spacing: Style.space(3)
-
-                  Item {
-                    width: parent.width
-                    implicitHeight: mountLabel.implicitHeight
-
-                    Text {
-                      id: mountLabel
-                      anchors.left: parent.left
-                      width: parent.width - usage.implicitWidth - Style.space(8)
-                      textFormat: Text.PlainText
-                      text: "󰋊 " + modelData.mount
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      elide: Text.ElideMiddle
-                    }
-
-                    Text {
-                      id: usage
-                      anchors.right: parent.right
-                      textFormat: Text.PlainText
-                      text: Model.bytes(modelData.usedBytes) + " / " + Model.bytes(modelData.totalBytes) + "  " + Model.percent(modelData.percent)
-                      color: root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-                  }
-
-                  LevelBar {
-                    width: parent.width
-                    level: modelData.percent
-                    fill: modelData.percent >= 90 ? root.urgent : root.accent
-                    track: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.1)
-                  }
-                }
-              }
-            }
-          }
-
-          // -------------------------------------------------------- containers
-          PanelSeparator { visible: root.containers.length > 0 && root.showDetails; foreground: root.foreground }
-
-          Column {
-            visible: root.containers.length > 0 && root.showDetails
-            width: parent.width
-            spacing: Style.space(12)
-
-            SectionHeader {
-              icon: "󰡨"
-              title: "CONTAINERS"
-              detail: root.runningContainers + "/" + root.containers.length + " RUNNING"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              width: parent.width
-              spacing: Style.space(2)
-
-              Repeater {
-                model: root.containers
-
-                ContainerRow {
-                  required property var modelData
-                  required property int index
-                  width: parent.width
-                  container: modelData
-                  rowKey: "c:" + index
-                }
-              }
-            }
-          }
-
-          // ----------------------------------------------------- failed units
-          PanelSeparator { visible: root.failedUnits.length > 0 && !root.showSetup; foreground: root.foreground }
-
-          Column {
-            visible: root.failedUnits.length > 0 && !root.showSetup
-            width: parent.width
-            spacing: Style.space(12)
-
-            SectionHeader {
-              icon: "󰀦"
-              title: "FAILED SERVICES"
-              detail: root.failedUnits.length + " FAILED"
-              detailColor: root.urgent
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              width: parent.width
-              spacing: Style.space(2)
-
-              Repeater {
-                model: root.failedUnits
-
-                UnitRow {
-                  required property var modelData
-                  required property int index
-                  width: parent.width
-                  unit: modelData
-                  rowKey: "u:" + index
-                }
-              }
-            }
-          }
-
-          // --------------------------------------------------------- processes
-          PanelSeparator { visible: root.processes.length > 0 && root.showDetails; foreground: root.foreground }
-
-          Column {
-            visible: root.processes.length > 0 && root.showDetails
-            width: parent.width
-            spacing: Style.space(12)
-
-            SectionHeader {
-              icon: "󰘚"
-              title: "TOP PROCESSES"
-              detail: "CPU · MEMORY"
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-            }
-
-            Column {
-              width: parent.width
-              spacing: Style.space(4)
-
-              Repeater {
-                model: root.processes
-
-                Row {
-                  required property var modelData
-                  width: parent.width
-                  spacing: Style.space(8)
-
-                  Text {
-                    width: parent.width - cpuCol.width - memCol.width - parent.spacing * 2
-                    textFormat: Text.PlainText
-                    text: modelData.name
-                    color: root.foreground
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    elide: Text.ElideRight
-                  }
-
-                  Text {
-                    id: cpuCol
-                    width: Style.space(58)
-                    textFormat: Text.PlainText
-                    text: modelData.cpu.toFixed(1) + "%"
-                    color: modelData.cpu >= 80 ? root.urgent : root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    horizontalAlignment: Text.AlignRight
-                  }
-
-                  Text {
-                    id: memCol
-                    width: Style.space(58)
-                    textFormat: Text.PlainText
-                    text: Model.bytes(modelData.rssBytes)
-                    color: root.dim
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
-                    horizontalAlignment: Text.AlignRight
-                  }
-                }
-              }
-            }
-          }
-
-          // ----------------------------------------------------------- actions
-          PanelSeparator { visible: root.online && !root.showSetup; foreground: root.foreground }
-
-          // One row, four equal buttons.
-          Row {
-            id: actionRow
-            visible: root.online && !root.showSetup
-            width: parent.width
-            spacing: Style.space(6)
-
-            Repeater {
-              model: root.actions
-
-              Button {
-                id: actionButton
-                required property var modelData
-                required property int index
-                readonly property string key: "a:" + index
-                width: (actionRow.width - actionRow.spacing * (root.actions.length - 1)) / root.actions.length
-                text: modelData.text
-                iconText: modelData.icon
-                fontSize: Style.font.caption
-                tooltipText: modelData.hint
-                bordered: true
-                hasCursor: root.cursorActive && root.cursorKey === key
-                foreground: root.foreground
-                fontFamily: root.fontFamily
-                enabled: !(root.client && root.client.busyAction !== "" && (modelData.key === "reboot" || modelData.key === "poweroff"))
-                onHovered: function(on) { if (on) root.hover(actionButton.key) }
-                onClicked: root.runAction(modelData.key)
-              }
-            }
-          }
-
-          Caption {
-            visible: root.online && !root.showSetup
-            width: parent.width
-            text: root.expanded ? "j/k · enter run · s start/stop · t ssh · b monitor · e less · c settings"
-              : "j/k · enter run · t ssh · b monitor · r refresh · e more"
-            foreground: root.foreground
-            opacity: 0.4
-            fontFamily: root.fontFamily
-            horizontalAlignment: Text.AlignHCenter
           }
         }
       }
@@ -1194,6 +1128,8 @@ Panel {
     }
   }
 
+  // A container: its name over what it is doing and its image, with stop or
+  // start and restart on the right. Stopped ones dim, unhealthy ones urgent.
   component ContainerRow: CursorSurface {
     id: row
 
@@ -1206,7 +1142,7 @@ Panel {
 
     hasCursor: root.cursorActive && root.cursorKey === rowKey
     foreground: root.foreground
-    implicitHeight: Math.max(Style.space(38), rowText.implicitHeight + Style.space(10))
+    implicitHeight: rowText.implicitHeight + Style.space(12)
     onHasCursorChanged: if (hasCursor && root.keyboardCursor) root.scrollIntoView(row)
 
     MouseArea {
@@ -1214,55 +1150,43 @@ Panel {
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
       onEntered: root.hover(row.rowKey)
-    }
-
-    // In the kit's icon column: 8 in, 22 wide, 10 to the text.
-    Rectangle {
-      id: dot
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8) + (Style.space(22) - width) / 2
-      anchors.verticalCenter: parent.verticalCenter
-      width: Math.max(6, Style.space(7))
-      height: width
-      radius: width / 2
-      color: row.unhealthy ? root.urgent : (row.running ? root.accent : Util.alpha(root.foreground, 0.25))
+      onExited: root.unhover(row.rowKey)
     }
 
     Column {
       id: rowText
-      anchors.left: dot.right
-      anchors.leftMargin: Style.space(10) + (Style.space(22) - dot.width) / 2
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(8)
       anchors.right: buttons.left
-      anchors.rightMargin: Style.space(6)
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: 0
+      spacing: root.lineGap
 
       Text {
         width: parent.width
         textFormat: Text.PlainText
+        wrapMode: Text.Wrap
         text: row.container ? row.container.name : ""
-        color: row.running ? root.foreground : root.dim
+        color: row.unhealthy ? root.urgent : (row.running ? root.foreground : root.dim)
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: row.hasCursor
-        elide: Text.ElideRight
+        font.pixelSize: Style.font.subtitle
       }
 
       Text {
         width: parent.width
         textFormat: Text.PlainText
-        text: row.busy ? "working…" : (row.container ? Model.shortStatus(row.container.status) + " · " + row.container.image : "")
+        wrapMode: Text.Wrap
+        text: row.busy ? "Working…" : (row.container ? Model.containerStatus(row.container) + " · " + row.container.image : "")
         color: row.unhealthy ? root.urgent : root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        font.pixelSize: Style.font.bodySmall
       }
     }
 
     Row {
       id: buttons
       anchors.right: parent.right
-      anchors.rightMargin: Style.space(6)
+      anchors.rightMargin: Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
 
@@ -1288,6 +1212,8 @@ Panel {
     }
   }
 
+  // A failed systemd unit: its name over its description, with restart on
+  // the right.
   component UnitRow: CursorSurface {
     id: unitRow
 
@@ -1297,7 +1223,7 @@ Panel {
 
     hasCursor: root.cursorActive && root.cursorKey === rowKey
     foreground: root.foreground
-    implicitHeight: Math.max(Style.space(34), unitText.implicitHeight + Style.space(10))
+    implicitHeight: unitText.implicitHeight + Style.space(12)
     onHasCursorChanged: if (hasCursor && root.keyboardCursor) root.scrollIntoView(unitRow)
 
     MouseArea {
@@ -1305,54 +1231,44 @@ Panel {
       hoverEnabled: true
       acceptedButtons: Qt.NoButton
       onEntered: root.hover(unitRow.rowKey)
-    }
-
-    Glyph {
-      id: unitIcon
-      anchors.left: parent.left
-      anchors.leftMargin: Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      width: Style.space(22)
-      icon: "󰅚"
-      size: Style.font.title
-      color: root.urgent
-      fontFamily: root.fontFamily
+      onExited: root.unhover(unitRow.rowKey)
     }
 
     Column {
       id: unitText
-      anchors.left: unitIcon.right
-      anchors.leftMargin: Style.space(10)
+      anchors.left: parent.left
+      anchors.leftMargin: Style.space(8)
       anchors.right: restart.left
-      anchors.rightMargin: Style.space(6)
+      anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
+      spacing: root.lineGap
 
       Text {
         width: parent.width
         textFormat: Text.PlainText
+        wrapMode: Text.Wrap
         text: unitRow.unit ? unitRow.unit.name : ""
         color: root.urgent
         font.family: root.fontFamily
-        font.pixelSize: Style.font.body
-        elide: Text.ElideRight
+        font.pixelSize: Style.font.subtitle
       }
 
       Text {
         visible: text !== ""
         width: parent.width
         textFormat: Text.PlainText
-        text: unitRow.busy ? "restarting…" : (unitRow.unit ? unitRow.unit.description : "")
+        wrapMode: Text.Wrap
+        text: unitRow.busy ? "Restarting…" : (unitRow.unit ? unitRow.unit.description : "")
         color: root.dim
         font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        elide: Text.ElideRight
+        font.pixelSize: Style.font.bodySmall
       }
     }
 
     PanelActionButton {
       id: restart
       anchors.right: parent.right
-      anchors.rightMargin: Style.space(6)
+      anchors.rightMargin: Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       iconText: "󰜉"
       tooltipText: "Restart service (uses sudo)"

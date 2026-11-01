@@ -13,7 +13,6 @@ Item {
   property string target: ""
   property int port: 22
   property int intervalSec: 5
-  property int historyLength: 60
   // The full rate is only worth it while numbers are on screen.
   property bool barMetrics: true
   property int openPanels: 0
@@ -26,10 +25,6 @@ Item {
   property var snapshot: null
   property var previousSnapshot: null
   property real lastPollMs: 0
-  property var cpuHistory: []
-  property var memHistory: []
-  property var rxHistory: []
-  property var txHistory: []
   property var peers: []
 
   // Desktop notifications when the server drops, comes back, or a new alert
@@ -117,10 +112,6 @@ Item {
     failedPolls = 0
     snapshot = null
     previousSnapshot = null
-    cpuHistory = []
-    memHistory = []
-    rxHistory = []
-    txHistory = []
     errorKind = ""
     errorText = ""
     actionStatus = ""
@@ -218,13 +209,6 @@ Item {
     errorText = ""
     status = "online"
     noteSnapshot(next)
-
-    if (next.cpuPercent !== null) cpuHistory = Model.pushHistory(cpuHistory, next.cpuPercent, historyLength)
-    memHistory = Model.pushHistory(memHistory, next.memory ? next.memory.percent : null, historyLength)
-    if (next.rxRate !== null) {
-      rxHistory = Model.pushHistory(rxHistory, next.rxRate, historyLength)
-      txHistory = Model.pushHistory(txHistory, next.txRate, historyLength)
-    }
   }
 
   onTargetChanged: if (!_holdPolling) { reset(); Qt.callLater(pollNow) }

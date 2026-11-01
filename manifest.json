@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.t3lluz.server-dashboard",
   "name": "Server Dashboard",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "author": "fredde",
   "license": "MIT",
   "homepage": "https://github.com/T3lluz/omarchy-server-dashboard",
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Server Dashboard",
-    "description": "Server stats in the bar (pick which, or none), and a compact themed dashboard that expands to graphs, storage, containers and processes.",
+    "description": "Server stats in the bar (pick which, or none), and a dashboard that draws the server and its parts with their readings, and expands to every disk, containers and processes.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -101,7 +101,7 @@
         "key": "panelExpanded",
         "type": "boolean",
         "label": "Open the panel expanded",
-        "description": "Show graphs, storage, containers and processes without pressing More.",
+        "description": "Show every disk, containers and processes without pressing More.",
         "defaultValue": false
       },
       {

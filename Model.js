@@ -296,13 +296,6 @@ function withRates(current, previous, elapsedSec) {
   return current
 }
 
-function pushHistory(list, value, max) {
-  var next = (list || []).slice()
-  next.push(value === null || value === undefined || !isFinite(value) ? 0 : value)
-  while (next.length > max) next.shift()
-  return next
-}
-
 function parsePeers(raw) {
   var out = []
   var lines = String(raw || "").split("\n")
@@ -387,14 +380,117 @@ function containerRunning(container) {
   return !!container && (container.state === "running" || container.state === "restarting")
 }
 
-function shortStatus(status) {
-  return String(status || "")
-    .replace(/^Up /, "up ")
-    .replace(/^Exited \((\d+)\) /, "exited $1 · ")
-    .replace(/ seconds?/, "s").replace(/ minutes?/, "m").replace(/ hours?/, "h")
-    .replace(/ days?/, "d").replace(/ weeks?/, "w").replace(/ months?/, "mo")
-    .replace(/About an? /, "1").replace(/Less than a second/, "<1s")
-    .replace(/ \(healthy\)/, " · healthy").replace(/ \(unhealthy\)/, " · unhealthy")
+// A container's state as the panel's status line says it: "Up 7 days,
+// healthy", "Stopped 2 hours ago", "Exited with code 137, 2 hours ago".
+function containerStatus(container) {
+  if (!container) return ""
+  var status = String(container.status || container.state || "")
+  var exited = status.match(/^Exited \((\d+)\) (.*)$/)
+  if (exited) return exited[1] === "0" ? "Stopped " + exited[2] : "Exited with code " + exited[1] + ", " + exited[2]
+  return status
+    .replace(/ \(health: starting\)/, ", starting")
+    .replace(/ \((healthy|unhealthy)\)/, ", $1")
+    .replace(/^(\w+) (About|Less)/, function(m, verb, word) { return verb + " " + word.toLowerCase() })
+}
+
+// ---------------------------------------------------------------- panel
+
+// A number as the panel's status lines print it: one decimal under 100.
+function shortNumber(value) {
+  return String(value >= 100 ? Math.round(value) : Math.round(value * 10) / 10)
+}
+
+// "5.7 of 14.5 GB": both sizes in the larger one's unit.
+function sizeOf(used, total) {
+  if (!(total > 0)) return "--"
+  var units = ["B", "KB", "MB", "GB", "TB", "PB"]
+  var i = 0
+  var t = total
+  while (t >= 1024 && i < units.length - 1) { t /= 1024; i++ }
+  var unit = Math.pow(1024, i)
+  return shortNumber(Math.max(0, used || 0) / unit) + " of " + shortNumber(total / unit) + " " + units[i]
+}
+
+// "455 MB": one size, as the process list prints it.
+function size(value) {
+  if (value === null || value === undefined || !isFinite(value)) return "--"
+  var units = ["B", "KB", "MB", "GB", "TB", "PB"]
+  var v = Math.max(0, value)
+  var i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  return (i === 0 ? Math.round(v) : shortNumber(v)) + " " + units[i]
+}
+
+// "5.4 KB/s", or two dashes before the second poll has a rate.
+function speed(value) {
+  var amount = size(value)
+  return amount === "--" ? amount : amount + "/s"
+}
+
+// "23 days 3 hours": the uptime written out, for the line under "Online".
+function uptimeLong(seconds) {
+  if (!(seconds > 0)) return ""
+  var d = Math.floor(seconds / 86400)
+  var h = Math.floor((seconds % 86400) / 3600)
+  var m = Math.floor((seconds % 3600) / 60)
+  function count(v, word) { return v + " " + word + (v === 1 ? "" : "s") }
+  if (d > 0) return count(d, "day") + (h > 0 ? " " + count(h, "hour") : "")
+  if (h > 0) return count(h, "hour") + (m > 0 ? " " + count(m, "minute") : "")
+  if (m > 0) return count(m, "minute")
+  return "under a minute"
+}
+
+// The label and value pairs beside the server's drawing: the network, the
+// containers, the kernel, tasks and swap. Two dashes stand in for each
+// until there is a reading.
+function serverFacts(snap) {
+  if (!snap) return ["Download", "Upload", "Kernel", "Tasks"].map(function(label) { return { label: label, value: "--" } })
+  var facts = [
+    { label: "Download", value: speed(snap.rxRate) },
+    { label: "Upload", value: speed(snap.txRate) }
+  ]
+  var containers = snap.containers || []
+  if (containers.length > 0) facts.push({ label: "Containers", value: containers.filter(containerRunning).length + " of " + containers.length })
+  if (snap.kernel) facts.push({ label: "Kernel", value: snap.kernel })
+  if (snap.load && snap.load.total) facts.push({ label: "Tasks", value: String(snap.load.total) })
+  if (snap.memory && snap.memory.swapTotalBytes > 0) facts.push({ label: "Swap", value: sizeOf(snap.memory.swapUsedBytes, snap.memory.swapTotalBytes) })
+  return facts
+}
+
+// The server's parts as the panel draws them: each with its drawing and
+// name on the left, and on the right its reading over a smaller line with
+// the share in use. The processor and its temperature, memory, and the root
+// disk, or every disk with `allDisks`. `hot` turns the reading urgent; disks
+// at 90%, where the notifications start.
+function parts(snap, allDisks) {
+  if (!snap) return []
+  var out = [{
+    key: "cpu", glyph: "cpu", name: snap.cpuModel || "Processor",
+    detail: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
+    share: shareText(snap.cpuPercent, "busy"), hot: level(snap.cpuPercent, 70, 90) === 2
+  }]
+  if (snap.cpuTemp !== null && snap.cpuTemp !== undefined) {
+    var warmth = level(snap.cpuTemp, 70, 85)
+    out.push({ key: "temp", glyph: "thermometer", name: "Temperature", detail: Math.round(snap.cpuTemp) + " °C",
+               share: ["Normal", "Warm", "Hot"][warmth], hot: warmth === 2 })
+  }
+  if (snap.memory) {
+    out.push({ key: "memory", glyph: "memory", name: "Memory", detail: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes),
+               share: shareText(snap.memory.percent, "used"), hot: snap.memory.percent >= 92 })
+  }
+  var disks = snap.disks || []
+  for (var i = 0; i < (allDisks ? disks.length : Math.min(1, disks.length)); i++) {
+    var disk = disks[i]
+    out.push({ key: "disk:" + disk.mount, glyph: "disk", name: disk.mount === "/" ? "Root disk" : disk.mount,
+               detail: sizeOf(disk.usedBytes, disk.totalBytes), share: shareText(disk.percent, "full"), hot: disk.percent >= 90 })
+  }
+  return out
+}
+
+// "40% used", or two dashes before the first reading.
+function shareText(value, word) {
+  if (value === null || value === undefined || !isFinite(value)) return "--"
+  return Math.round(value) + "% " + word
 }
 
 // ---------------------------------------------------------------- alerts

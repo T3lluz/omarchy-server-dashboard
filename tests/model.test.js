@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, pushHistory, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, shortStatus, parseDf, parseNetDev, parseCpuTemp, alerts, newAlerts }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, serverFacts, parts, shareText, parseDf, parseNetDev, parseCpuTemp, alerts, newAlerts }")()
 
 const sample = (ts, idle, rx) => `@@TS
 ${ts}
@@ -103,9 +103,6 @@ assert.deepStrictEqual(Model.parseError("@@ERROR\nauth\nWrong password\n"), { ki
 assert.strictEqual(Model.parseError(sample(1, 1, 1)), null)
 assert.strictEqual(Model.parseProbe("@@TS\n1\n"), null, "a truncated probe is not a snapshot")
 
-assert.deepStrictEqual(Model.pushHistory([1, 2, 3], 4, 3), [2, 3, 4])
-assert.deepStrictEqual(Model.pushHistory([], null, 3), [0])
-
 const peers = Model.parsePeers("pixel\t100.1.1.1\tandroid\tonline\nbox\t100.2.2.2\tlinux\toffline\nhomeserver\t100.64.0.10\tlinux\tonline\n")
 assert.deepStrictEqual(peers.map(p => p.name), ["homeserver", "pixel", "box"])
 
@@ -123,8 +120,58 @@ assert.strictEqual(Model.targetUser("casaos@100.64.0.10"), "casaos")
 assert.strictEqual(Model.validTarget("casaos@100.64.0.10"), true)
 assert.strictEqual(Model.validTarget("-oProxyCommand=x"), false)
 assert.strictEqual(Model.validTarget("a b@host"), false)
-assert.strictEqual(Model.shortStatus("Up 3 days (healthy)"), "up 3d · healthy")
-assert.strictEqual(Model.shortStatus("Exited (0) 2 hours ago"), "exited 0 · 2h ago")
+assert.strictEqual(Model.containerStatus({ status: "Up 3 days (healthy)" }), "Up 3 days, healthy")
+assert.strictEqual(Model.containerStatus({ status: "Up About an hour (health: starting)" }), "Up about an hour, starting")
+assert.strictEqual(Model.containerStatus({ status: "Exited (0) 2 hours ago" }), "Stopped 2 hours ago")
+assert.strictEqual(Model.containerStatus({ status: "Exited (137) 5 minutes ago" }), "Exited with code 137, 5 minutes ago")
+assert.strictEqual(Model.containerStatus({ state: "created", status: "" }), "created")
+
+// The panel's copy: sizes in one unit, rates with a space, uptime in words.
+assert.strictEqual(Model.sizeOf(5.7 * 1024 ** 3, 14.5 * 1024 ** 3), "5.7 of 14.5 GB")
+assert.strictEqual(Model.sizeOf(174 * 1024 ** 3, 467 * 1024 ** 3), "174 of 467 GB")
+assert.strictEqual(Model.sizeOf(0, 0), "--")
+assert.strictEqual(Model.speed(5.4 * 1024), "5.4 KB/s")
+assert.strictEqual(Model.speed(300), "300 B/s")
+assert.strictEqual(Model.speed(null), "--")
+assert.strictEqual(Model.size(466428 * 1024), "455 MB")
+assert.strictEqual(Model.uptimeLong(23 * 86400 + 3 * 3600 + 60), "23 days 3 hours")
+assert.strictEqual(Model.uptimeLong(86400), "1 day")
+assert.strictEqual(Model.uptimeLong(3900), "1 hour 5 minutes")
+assert.strictEqual(Model.uptimeLong(30), "under a minute")
+
+// Beside the server: dashes until the first reading, then the network,
+// containers, kernel, tasks and swap.
+assert.deepStrictEqual(Model.serverFacts(null).map(f => f.value), ["--", "--", "--", "--"])
+{
+  const facts = Model.serverFacts(b)
+  assert.deepStrictEqual(facts.map(f => f.label), ["Download", "Upload", "Containers", "Kernel", "Tasks", "Swap"])
+  assert.strictEqual(facts[0].value, "977 KB/s")
+  assert.strictEqual(facts[2].value, "2 of 3")
+  assert.strictEqual(facts[5].value, "0.5 of 1.9 GB")
+}
+
+// The parts: processor and its temperature, memory, then the root disk, or
+// every disk when expanded. The reading on the right, the share under it,
+// urgent where it runs hot.
+{
+  const rows = Model.parts(c, false)
+  assert.deepStrictEqual(rows.map(r => r.glyph), ["cpu", "thermometer", "memory", "disk"])
+  assert.strictEqual(rows[0].name, "Intel Core i5-8500T")
+  assert.strictEqual(rows[0].detail, "Load 0.52")
+  assert.strictEqual(rows[0].share, "93% busy")
+  assert.strictEqual(rows[0].hot, true, "93% CPU is hot")
+  assert.strictEqual(rows[1].detail, "48 °C")
+  assert.strictEqual(rows[1].share, "Normal")
+  assert.strictEqual(rows[2].detail, "11.4 of 15.3 GB")
+  assert.strictEqual(rows[2].share, "75% used")
+  assert.strictEqual(rows[3].name, "Root disk")
+  assert.strictEqual(rows[3].share, "42% full")
+  assert.deepStrictEqual(Model.parts(c, true).slice(3).map(r => r.name), ["Root disk", "/DATA"])
+  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }), false)[1].share, "Hot")
+  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: null }), false).length, 3)
+  assert.strictEqual(Model.parts(a, false)[0].share, "--", "no CPU share before the second poll")
+  assert.deepStrictEqual(Model.parts(null, false), [])
+}
 
 // The probe of this very machine must parse too.
 for (const f of process.argv.slice(2)) {

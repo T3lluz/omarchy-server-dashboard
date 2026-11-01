@@ -6,7 +6,8 @@ How Server Dashboard is put together, for anyone (or any agent) changing it. The
 
 - `BarWidget.qml`: the bar entry, once per monitor. The first instance (the leader) loads `ServerClient.qml`; the others read the leader's. Hosts `Panel.qml` and the IPC target.
 - `ServerClient.qml`: polling, history, actions and notifications for the one server.
-- `Panel.qml`, `Gauge.qml`, `Sparkline.qml`: the dashboard, built from the panel kit (below).
+- `Panel.qml`: the dashboard, in Batteries' style: the server drawn big with its readings beside it, then a row per part (processor, temperature, memory, disks), each drawing lined up with the text beside it, from the cap height of the first line to the baseline of the last (the `FontMetrics` in the panel measure that). Settings keep the panel kit (below).
+- `DeviceGlyph.qml`, `Glyphs.js`: the drawings, solid with fine details cut out, as in Batteries. `scripts/draw-glyphs.py` builds them from plain shapes and regenerates `Glyphs.js`. `PulseGlyph.qml` is Batteries' charging pulse, here while the server connects or reboots.
 - `Updater.qml`, `Update.js`, `bin/plugin-update`: the shared updater, hosted by `ServerClient.qml`.
 - `WidgetSettings.qml`: this widget's `shell.json` entry, read from the file (see below).
 - `Model.js`: parses the probe, rates, formatting and the alert rules. Tested by `tests/model.test.js`.
