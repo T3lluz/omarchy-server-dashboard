@@ -210,6 +210,8 @@ function parseProcesses(lines) {
   for (var i = 0; i < (lines || []).length; i++) {
     var f = lines[i].trim().split(/\s+/)
     if (f.length < 5 || f[0] === "PID" || !/^\d+$/.test(f[0])) continue
+    // The probe's own ps, alive for an instant and so always near 100%.
+    if (f.slice(4).join(" ") === "ps") continue
     out.push({
       pid: Number(f[0]),
       cpu: Number(f[1]) || 0,
@@ -395,7 +397,7 @@ function containerStatus(container) {
 
 // ---------------------------------------------------------------- panel
 
-// A number as the panel's status lines print it: one decimal under 100.
+// A number as the panel prints it: one decimal under 100.
 function shortNumber(value) {
   return String(value >= 100 ? Math.round(value) : Math.round(value * 10) / 10)
 }
@@ -427,7 +429,7 @@ function speed(value) {
   return amount === "--" ? amount : amount + "/s"
 }
 
-// "23 days 3 hours": the uptime written out, for the line under "Online".
+// "23 days 3 hours": the uptime written out, for the panel's status line.
 function uptimeLong(seconds) {
   if (!(seconds > 0)) return ""
   var d = Math.floor(seconds / 86400)
@@ -440,57 +442,123 @@ function uptimeLong(seconds) {
   return "under a minute"
 }
 
-// The label and value pairs beside the server's drawing: the network, the
-// containers, the kernel, tasks and swap. Two dashes stand in for each
-// until there is a reading.
+// The status line under the panel's title, one entry per state or fact. The
+// panel rotates through them, the way Omarchy's own panels rotate theirs.
+// `state` has configured, online, snapshot, status, errorKind and busyAction.
+function heroLines(state) {
+  if (!state.configured) return ["Connect a server over SSH"]
+  if (/^reboot:/.test(state.busyAction)) return ["Rebooting"]
+  if (/^poweroff:/.test(state.busyAction)) return ["Shutting down"]
+  if (state.online && state.snapshot) {
+    var snap = state.snapshot
+    var count = problemCount(snap)
+    if (count === 1 && snap.rebootRequired) return ["Reboot required"]
+    if (count > 0) return [count + (count === 1 ? " alert" : " alerts")]
+    if (parts(snap).some(function(part) { return part.hot })) return ["Running hot"]
+    var lines = ["All clear"]
+    if (snap.uptimeSeconds > 0) lines.push("Up " + uptimeLong(snap.uptimeSeconds))
+    if (snap.osName) lines.push(snap.osName)
+    return lines
+  }
+  if (state.status === "error") {
+    if (state.errorKind === "hostkey") return ["Host key changed"]
+    if (["auth", "nopassword", "keyring", "config"].indexOf(state.errorKind) !== -1) return ["Password needed"]
+    return ["Offline", "Retrying every 30 seconds"]
+  }
+  return ["Connecting over SSH"]
+}
+
+function percentText(value) {
+  if (value === null || value === undefined || !isFinite(value)) return "--"
+  return Math.round(value) + "%"
+}
+
+// How far along a temperature's meter sits: the calm range stays in the low
+// part of the track, and the warm range climbs to full where it turns hot.
+function temperatureLevel(celsius) {
+  if (celsius < 70) return clamp(celsius, 0, 70) / 70 * 40
+  return 40 + (clamp(celsius, 70, 85) - 70) / 15 * 60
+}
+
+// One disk as a gauge, named by the end of its path to fit the half-width
+// cell; the tooltip has all of it. Hot at 90%, where the notifications start.
+function diskPart(disk) {
+  return {
+    key: "disk:" + disk.mount, icon: "\u{F02CA}", name: disk.mount === "/" ? "Root disk" : disk.mount.split("/").pop(),
+    value: percentText(disk.percent), level: disk.percent, detail: sizeOf(disk.usedBytes, disk.totalBytes),
+    tip: "Mounted at " + disk.mount, hot: disk.percent >= 90
+  }
+}
+
+// The panel's gauges: processor, its temperature, memory and the root disk.
+// Each has an icon and name, a value, a level from 0 to 100 for the meter, a
+// detail under it, an optional tooltip, and `hot` turning it urgent.
+function parts(snap) {
+  if (!snap) return []
+  var out = [{
+    key: "cpu", icon: "\u{F0EE0}", name: "Processor",
+    value: percentText(snap.cpuPercent), level: snap.cpuPercent,
+    detail: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
+    tip: (snap.cpuModel || "") + (snap.cores > 0 ? (snap.cpuModel ? ", " : "") + snap.cores + " cores" : ""),
+    hot: level(snap.cpuPercent, 70, 90) === 2
+  }]
+  if (snap.cpuTemp !== null && snap.cpuTemp !== undefined) {
+    var warmth = level(snap.cpuTemp, 70, 85)
+    out.push({ key: "temp", icon: warmth === 0 ? "\u{F050F}" : "\u{F10C2}", name: "Temperature",
+               value: Math.round(snap.cpuTemp) + " °C", level: temperatureLevel(snap.cpuTemp),
+               detail: ["Normal", "Warm", "Hot"][warmth], tip: "", hot: warmth === 2 })
+  }
+  if (snap.memory) {
+    out.push({ key: "memory", icon: "\u{F061A}", name: "Memory", value: percentText(snap.memory.percent), level: snap.memory.percent,
+               detail: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes), tip: "", hot: snap.memory.percent >= 92 })
+  }
+  if (snap.disks && snap.disks.length > 0) out.push(diskPart(snap.disks[0]))
+  return out
+}
+
+// The filesystems after the root one, as gauges for the details.
+function otherDisks(snap) {
+  return snap && snap.disks ? snap.disks.slice(1).map(diskPart) : []
+}
+
+// The label and value pairs under the gauges: the network, then what the
+// server is running. Two dashes stand in until there is a rate.
 function serverFacts(snap) {
-  if (!snap) return ["Download", "Upload", "Kernel", "Tasks"].map(function(label) { return { label: label, value: "--" } })
+  if (!snap) return []
   var facts = [
     { label: "Download", value: speed(snap.rxRate) },
     { label: "Upload", value: speed(snap.txRate) }
   ]
+  if (snap.uptimeSeconds > 0) facts.push({ label: "Uptime", value: uptime(snap.uptimeSeconds) })
   var containers = snap.containers || []
   if (containers.length > 0) facts.push({ label: "Containers", value: containers.filter(containerRunning).length + " of " + containers.length })
-  if (snap.kernel) facts.push({ label: "Kernel", value: snap.kernel })
   if (snap.load && snap.load.total) facts.push({ label: "Tasks", value: String(snap.load.total) })
   if (snap.memory && snap.memory.swapTotalBytes > 0) facts.push({ label: "Swap", value: sizeOf(snap.memory.swapUsedBytes, snap.memory.swapTotalBytes) })
   return facts
 }
 
-// The server's parts as the panel draws them: each with its drawing and
-// name on the left, and on the right its reading over a smaller line with
-// the share in use. The processor and its temperature, memory, and the root
-// disk, or every disk with `allDisks`. `hot` turns the reading urgent; disks
-// at 90%, where the notifications start.
-function parts(snap, allDisks) {
+// What the machine is, for the details.
+function systemFacts(snap) {
   if (!snap) return []
-  var out = [{
-    key: "cpu", glyph: "cpu", name: snap.cpuModel || "Processor",
-    detail: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
-    share: shareText(snap.cpuPercent, "busy"), hot: level(snap.cpuPercent, 70, 90) === 2
-  }]
-  if (snap.cpuTemp !== null && snap.cpuTemp !== undefined) {
-    var warmth = level(snap.cpuTemp, 70, 85)
-    out.push({ key: "temp", glyph: "thermometer", name: "Temperature", detail: Math.round(snap.cpuTemp) + " °C",
-               share: ["Normal", "Warm", "Hot"][warmth], hot: warmth === 2 })
-  }
-  if (snap.memory) {
-    out.push({ key: "memory", glyph: "memory", name: "Memory", detail: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes),
-               share: shareText(snap.memory.percent, "used"), hot: snap.memory.percent >= 92 })
-  }
-  var disks = snap.disks || []
-  for (var i = 0; i < (allDisks ? disks.length : Math.min(1, disks.length)); i++) {
-    var disk = disks[i]
-    out.push({ key: "disk:" + disk.mount, glyph: "disk", name: disk.mount === "/" ? "Root disk" : disk.mount,
-               detail: sizeOf(disk.usedBytes, disk.totalBytes), share: shareText(disk.percent, "full"), hot: disk.percent >= 90 })
-  }
-  return out
+  var facts = []
+  if (snap.cpuModel) facts.push({ label: "Processor", value: snap.cpuModel })
+  if (snap.cores > 0) facts.push({ label: "Cores", value: String(snap.cores) })
+  if (snap.osName) facts.push({ label: "System", value: snap.osName })
+  if (snap.kernel) facts.push({ label: "Kernel", value: snap.kernel })
+  if (snap.arch) facts.push({ label: "Architecture", value: snap.arch })
+  return facts
 }
 
-// "40% used", or two dashes before the first reading.
-function shareText(value, word) {
-  if (value === null || value === undefined || !isFinite(value)) return "--"
-  return Math.round(value) + "% " + word
+// What the details row opens, named in the order they appear under it.
+function detailsLabel(snap) {
+  if (!snap) return ""
+  var names = []
+  if (otherDisks(snap).length > 0) names.push("disks")
+  if ((snap.processes || []).length > 0) names.push("processes")
+  if (systemFacts(snap).length > 0) names.push("system")
+  if ((snap.containers || []).length > 0) names.push("containers")
+  var label = names.join(", ")
+  return label.charAt(0).toUpperCase() + label.slice(1)
 }
 
 // ---------------------------------------------------------------- alerts
@@ -514,6 +582,28 @@ function alerts(snapshot) {
   var units = snapshot.failedUnits || []
   for (var u = 0; u < units.length; u++) out["unit:" + units[u].name] = units[u].name + " failed"
   return out
+}
+
+// What the banner at the top of the panel says: every alert except failed
+// units, which have their own section, and a pending reboot.
+function alertLines(snapshot) {
+  if (!snapshot) return []
+  var all = alerts(snapshot)
+  var lines = []
+  for (var key in all) if (key.indexOf("unit:") !== 0) lines.push(all[key])
+  if (snapshot.rebootRequired) lines.push("Reboot required")
+  return lines
+}
+
+// Everything the panel lists as wrong: the banner's lines and failed units.
+function problemCount(snapshot) {
+  return snapshot ? alertLines(snapshot).length + (snapshot.failedUnits || []).length : 0
+}
+
+// Whether the status line should stand out: something is listed as wrong, or
+// a gauge runs hot.
+function needsAttention(snapshot) {
+  return problemCount(snapshot) > 0 || parts(snapshot).some(function(part) { return part.hot })
 }
 
 // The alerts in `current` that were not in `previous`, as messages.

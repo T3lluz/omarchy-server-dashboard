@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, serverFacts, parts, shareText, parseDf, parseNetDev, parseCpuTemp, alerts, newAlerts }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, serverFacts, systemFacts, parts, otherDisks, detailsLabel, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts }")()
 
 const sample = (ts, idle, rx) => `@@TS
 ${ts}
@@ -139,38 +139,78 @@ assert.strictEqual(Model.uptimeLong(86400), "1 day")
 assert.strictEqual(Model.uptimeLong(3900), "1 hour 5 minutes")
 assert.strictEqual(Model.uptimeLong(30), "under a minute")
 
-// Beside the server: dashes until the first reading, then the network,
-// containers, kernel, tasks and swap.
-assert.deepStrictEqual(Model.serverFacts(null).map(f => f.value), ["--", "--", "--", "--"])
+// The probe's own ps never counts as a process.
+assert.deepStrictEqual(Model.parseProbe(sample(1, 1000, 0).replace("@@PROC\n", "@@PROC\n   99 100 0.0 4400 ps\n")).processes.filter(p => p.name === "ps"), [])
+
+// Under the gauges: nothing until connected, dashes until the first rate.
+assert.deepStrictEqual(Model.serverFacts(null), [])
 {
   const facts = Model.serverFacts(b)
-  assert.deepStrictEqual(facts.map(f => f.label), ["Download", "Upload", "Containers", "Kernel", "Tasks", "Swap"])
+  assert.deepStrictEqual(facts.map(f => f.label), ["Download", "Upload", "Uptime", "Containers", "Tasks", "Swap"])
   assert.strictEqual(facts[0].value, "977 KB/s")
-  assert.strictEqual(facts[2].value, "2 of 3")
+  assert.strictEqual(facts[3].value, "2 of 3")
   assert.strictEqual(facts[5].value, "0.5 of 1.9 GB")
+  assert.strictEqual(Model.serverFacts(a)[0].value, "--")
+  assert.deepStrictEqual(Model.systemFacts(b).map(f => f.label), ["Processor", "Cores", "System", "Kernel", "Architecture"])
+  assert.deepStrictEqual(Model.systemFacts(null), [])
 }
 
-// The parts: processor and its temperature, memory, then the root disk, or
-// every disk when expanded. The reading on the right, the share under it,
-// urgent where it runs hot.
+// The gauges: processor and its temperature, memory and the root disk, each
+// with a value, a level for its meter and a detail, urgent where it runs hot.
 {
-  const rows = Model.parts(c, false)
-  assert.deepStrictEqual(rows.map(r => r.glyph), ["cpu", "thermometer", "memory", "disk"])
-  assert.strictEqual(rows[0].name, "Intel Core i5-8500T")
+  const rows = Model.parts(c)
+  assert.deepStrictEqual(rows.map(r => r.key), ["cpu", "temp", "memory", "disk:/"])
+  assert.ok(rows.every(r => r.icon.length > 0), "every gauge has an icon")
+  assert.strictEqual(rows[0].name, "Processor")
+  assert.strictEqual(rows[0].value, "93%")
   assert.strictEqual(rows[0].detail, "Load 0.52")
-  assert.strictEqual(rows[0].share, "93% busy")
+  assert.ok(rows[0].tip.startsWith("Intel Core i5-8500T"), "the processor's model is its tooltip")
   assert.strictEqual(rows[0].hot, true, "93% CPU is hot")
-  assert.strictEqual(rows[1].detail, "48 °C")
-  assert.strictEqual(rows[1].share, "Normal")
+  assert.strictEqual(rows[1].value, "48 °C")
+  assert.strictEqual(rows[1].detail, "Normal")
+  assert.strictEqual(rows[2].value, "75%")
   assert.strictEqual(rows[2].detail, "11.4 of 15.3 GB")
-  assert.strictEqual(rows[2].share, "75% used")
   assert.strictEqual(rows[3].name, "Root disk")
-  assert.strictEqual(rows[3].share, "42% full")
-  assert.deepStrictEqual(Model.parts(c, true).slice(3).map(r => r.name), ["Root disk", "/DATA"])
-  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }), false)[1].share, "Hot")
-  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: null }), false).length, 3)
-  assert.strictEqual(Model.parts(a, false)[0].share, "--", "no CPU share before the second poll")
-  assert.deepStrictEqual(Model.parts(null, false), [])
+  assert.strictEqual(rows[3].value, "42%")
+  assert.deepStrictEqual(Model.otherDisks(c).map(r => r.name), ["DATA"])
+  assert.deepStrictEqual(Model.otherDisks(null), [])
+  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }))[1].detail, "Hot")
+  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }))[1].hot, true)
+  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: null })).length, 3)
+  assert.strictEqual(Model.parts(a)[0].value, "--", "no CPU share before the second poll")
+  assert.deepStrictEqual(Model.parts(null), [])
+  assert.strictEqual(Model.detailsLabel(c), "Disks, processes, system, containers")
+  assert.strictEqual(Model.detailsLabel(Object.assign({}, c, { containers: [] })), "Disks, processes, system")
+}
+
+// The status line: what is going on, then facts to rotate through.
+{
+  const calm = Object.assign({}, c, { rebootRequired: false, failedUnits: [], containers: [], disks: [], cpuPercent: 10, memory: Object.assign({}, c.memory, { percent: 10 }) })
+  const state = extra => Object.assign({ configured: true, online: true, snapshot: calm, status: "online", errorKind: "", busyAction: "" }, extra)
+  assert.deepStrictEqual(Model.heroLines(state({ configured: false })), ["Connect a server over SSH"])
+  assert.strictEqual(Model.heroLines(state())[0], "All clear")
+  assert.ok(Model.heroLines(state()).length > 1, "a healthy server rotates through facts")
+  assert.strictEqual(Model.needsAttention(calm), false)
+  const withSnap = extra => state({ snapshot: Object.assign({}, calm, extra) })
+  assert.deepStrictEqual(Model.heroLines(withSnap({ rebootRequired: true })), ["Reboot required"], "named when it is the only thing")
+  assert.deepStrictEqual(Model.heroLines(withSnap({ failedUnits: [{ name: "a" }] })), ["1 alert"])
+  // The count is everything listed: the banner's lines plus failed units.
+  const listed = Object.assign({}, calm, { rebootRequired: true, failedUnits: [{ name: "a" }, { name: "b" }] })
+  assert.strictEqual(Model.problemCount(listed), 3)
+  assert.deepStrictEqual(Model.heroLines(state({ snapshot: listed })), ["3 alerts"])
+  // Hot gauges are never "all clear", though they are not listed as alerts.
+  assert.deepStrictEqual(Model.heroLines(withSnap({ cpuPercent: 97 })), ["Running hot"])
+  assert.strictEqual(Model.needsAttention(Object.assign({}, calm, { cpuTemp: 93 })), true)
+  // A temperature's meter stays low while calm and fills where it turns hot.
+  assert.ok(Model.temperatureLevel(46) < 30)
+  assert.strictEqual(Model.temperatureLevel(70), 40)
+  assert.strictEqual(Model.temperatureLevel(85), 100)
+  assert.strictEqual(Model.temperatureLevel(120), 100)
+  assert.deepStrictEqual(Model.heroLines(state({ busyAction: "reboot:" })), ["Rebooting"])
+  assert.deepStrictEqual(Model.heroLines(state({ online: false, status: "connecting" })), ["Connecting over SSH"])
+  assert.deepStrictEqual(Model.heroLines(state({ online: false, status: "error", errorKind: "unreachable" })), ["Offline", "Retrying every 30 seconds"])
+  assert.deepStrictEqual(Model.heroLines(state({ online: false, status: "error", errorKind: "auth" })), ["Password needed"])
+  assert.deepStrictEqual(Model.heroLines(state({ online: false, status: "error", errorKind: "hostkey" })), ["Host key changed"])
 }
 
 // The probe of this very machine must parse too.
@@ -197,6 +237,10 @@ for (const f of process.argv.slice(2)) {
   assert.strictEqual(now["disk:/"], "/ is 93% full")
   assert.strictEqual(now["container:db"], "db keeps restarting")
   assert.deepStrictEqual(Model.alerts(null), {})
+  // The banner leaves failed units to their section and adds a pending reboot.
+  assert.deepStrictEqual(Model.alertLines(Object.assign({}, snap, { rebootRequired: true })).slice(-1), ["Reboot required"])
+  assert.ok(!Model.alertLines(snap).some(l => /backup/.test(l)), "failed units have their own section")
+  assert.deepStrictEqual(Model.alertLines(null), [])
   // Only what is new since the last poll is announced.
   assert.deepStrictEqual(Model.newAlerts(now, now), [])
   assert.deepStrictEqual(Model.newAlerts({ "disk:/": "/ is 93% full" }, { "disk:/": "/ is 94% full", "unit:x": "x failed" }), ["x failed"])

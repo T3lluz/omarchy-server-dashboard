@@ -5,12 +5,12 @@ import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
-import "Glyphs.js" as Glyphs
 
-// The dashboard, drawn the way Batteries draws its devices: the server big
-// with its readings beside it, then each part with its number, then failed
-// services, and with More the containers and processes. The gear swaps them
-// for the settings and the connect form, which keep the family's panel kit.
+// The dashboard, built to Omarchy's own panel numbers. A fixed header with the
+// status line that changes, a fixed row of actions at the bottom, and between
+// them what scrolls: alerts, failed services, gauges, readings, and the
+// details row with disks, processes, the system and containers. The gear swaps
+// the middle for the settings and the connect form.
 Panel {
   id: root
   moduleName: "io.github.t3lluz.server-dashboard"
@@ -20,8 +20,8 @@ Panel {
   property var hostWidget: null
   property var client: null
 
-  // Cursor shared by keyboard and mouse: "c:<i>" container, "u:<i>" failed
-  // unit, "a:<i>" action button.
+  // Cursor shared by keyboard and mouse: "u:<i>" failed unit, "a:<i>" action
+  // button, "m" the details row, "c:<i>" container.
   property string cursorKey: ""
   property bool cursorActive: false
   // Only keyboard moves scroll; scrolling on hover would slide the next row
@@ -35,8 +35,11 @@ Panel {
 
   readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   readonly property color accent: Commons.Color.accent
-  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
-  readonly property color dim: Qt.darker(foreground, 1.55)
+  // The theme's alert color. A monochrome theme makes it a quiet grey, which
+  // would make a problem look calmer than the readings around it, so there it
+  // is the bright foreground instead; the alert glyphs carry the rest.
+  readonly property color urgent: Commons.Color.urgent.hslSaturation < 0.2 ? foreground : Commons.Color.urgent
+  readonly property color dim: Qt.darker(foreground, 1.4)
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   readonly property var snap: client && client.snapshot ? client.snapshot : null
@@ -47,38 +50,49 @@ Panel {
   readonly property string displayName: hostWidget ? hostWidget.displayName : "Server"
   readonly property bool showSetup: !!client && (!client.configured || setupOpen
     || (status === "error" && ["auth", "nopassword", "config", "keyring"].indexOf(errorKind) !== -1))
-  readonly property bool showDetails: online && !showSetup && expanded
+  readonly property bool showDashboard: !showSetup
+  readonly property bool showDetails: online && showDashboard && expanded
   readonly property var containers: online && snap.containers ? snap.containers : []
   readonly property var failedUnits: online && snap.failedUnits ? snap.failedUnits : []
   readonly property var processes: online && snap.processes ? snap.processes : []
-  readonly property var disks: online && snap.disks ? snap.disks : []
-  readonly property var rootDisk: disks.length > 0 ? disks[0] : null
+  readonly property var parts: online ? Model.parts(snap) : []
+  readonly property var facts: online ? Model.serverFacts(snap) : []
+  readonly property var otherDisks: online ? Model.otherDisks(snap) : []
+  readonly property var systemFacts: online ? Model.systemFacts(snap) : []
+  readonly property string detailsLabel: online ? Model.detailsLabel(snap) : ""
   readonly property int runningContainers: containers.filter(Model.containerRunning).length
 
-  // The server's readings: the facts beside its drawing and a row per part.
-  readonly property var facts: Model.serverFacts(online ? snap : null)
-  readonly property var parts: online ? Model.parts(snap, expanded) : []
-  // Connecting, rebooting or powering off: the server pulses until it is
-  // done, the way a device pulses in Batteries while it charges.
+  // Connecting, rebooting or powering off: the icon pulses until it is done.
   readonly property bool serverWorking: configured && ((!online && status !== "error")
     || /^(reboot|poweroff):/.test(client.busyAction))
 
-  // The family's rhythm, as in Batteries: settings keep the kit's gaps, the
-  // dashboard gets more air around its drawings.
-  readonly property real sectionGap: Style.space(12)
-  readonly property real tileGap: Style.space(8)
-  readonly property real groupGap: Style.space(20)
-  // The gap between a name and its status line.
-  readonly property real lineGap: Style.space(3)
-  // A part's drawing runs from its reading's cap height to the baseline of
-  // the share under it.
-  readonly property real partIconSize: readingType.height + lineGap + smallType.height - capInset(readingType) - smallType.descent
+  // The status line. It says what the panel knows, rotates through the facts
+  // the way Omarchy's panels rotate their phrases, and while the cursor is on
+  // something it says what that does.
+  property int lineIndex: 0
+  readonly property var heroLines: setupOpen && configured
+    ? ["Saved as you change them"]
+    : Model.heroLines({
+        configured: configured,
+        online: online,
+        snapshot: snap,
+        status: status,
+        errorKind: errorKind,
+        busyAction: client ? client.busyAction : ""
+      })
+  readonly property string heroHint: cursorActive && showDashboard ? hintFor(cursorKey) : ""
+  readonly property string heroLine: heroHint !== "" ? heroHint : heroLines[lineIndex % heroLines.length]
+  // Offline, or a changed host key: a possible attack is no quiet matter, though
+  // like a wrong password it needs the user rather than a retry.
+  readonly property bool serverAlarm: status === "error" && !!client && (!client.needsUser || errorKind === "hostkey")
+  readonly property bool heroUrgent: heroHint === "" && !setupOpen
+    && (serverAlarm || (online && Model.needsAttention(snap)))
 
   readonly property var actions: [
-    { key: "ssh", icon: "󰆍", text: "SSH", hint: "Open a shell on the server (t)" },
-    { key: "btop", icon: "󰓅", text: "Monitor", hint: "Open btop, or htop or top, on the server (b)" },
-    { key: "reboot", icon: "󰜉", text: "Reboot", hint: "Reboot the server" },
-    { key: "poweroff", icon: "󰐥", text: "Power off", hint: "Shut the server down" }
+    { key: "ssh", icon: "󰆍", text: "SSH", hint: "Open a shell (t)" },
+    { key: "btop", icon: "󰨇", text: "Monitor", hint: "Open btop on the server (b)" },
+    { key: "reboot", icon: "󰜉", text: "Reboot", hint: "Reboot, asks first" },
+    { key: "poweroff", icon: "󰐥", text: "Shutdown", hint: "Shut down, asks first" }
   ]
 
   // What the bar can show beside the server mark, with the bar's own glyphs.
@@ -93,7 +107,7 @@ Panel {
 
   readonly property var updater: client ? client.updater : null
 
-  // The banners at the top of the dashboard, as in the other plugins: a
+  // The banners at the top of the dashboard: the server not answering, a
   // changed host key, the action running or just finished, the server's
   // alerts, an update.
   readonly property var notices: {
@@ -101,17 +115,20 @@ Panel {
     if (!client) return list
     if (status === "error" && errorKind === "hostkey" && !showSetup)
       list.push({ key: "hostkey", tone: "urgent", icon: "󰌋", text: client.errorText, action: "trustKey", actionLabel: "Trust it" })
+    else if (status === "error" && !showSetup)
+      list.push({ key: "offline", tone: "urgent", icon: "󰀦", text: client.errorText, action: "retry", actionLabel: "Retry" })
     if (client.actionStatus !== "")
       list.push({ key: "action", tone: client.actionFailed ? "urgent" : "accent", busy: client.busyAction !== "",
                   icon: client.busyAction !== "" ? "󰑐" : (client.actionFailed ? "󰀦" : "󰄬"), text: client.actionStatus })
-    var alerts = alertText()
-    if (alerts !== "" && !showSetup) list.push({ key: "alerts", tone: "urgent", icon: "󰀦", text: alerts.charAt(0).toUpperCase() + alerts.slice(1) })
+    var alerts = online && !showSetup ? Model.alertLines(snap) : []
+    if (alerts.length > 0) list.push({ key: "alerts", tone: "urgent", icon: "󰀦", text: alerts.join("\n") })
     if (updater && updater.notice) list.push(updater.notice)
     return list
   }
 
   function noticeAction(notice) {
     if (notice.action === "trustKey") client.trustNewKey()
+    else if (notice.action === "retry") client.retry()
     else if (notice.action === "update" && updater) updater.apply()
   }
 
@@ -122,19 +139,11 @@ Panel {
   readonly property var cursorTargets: {
     var keys = []
     if (!online || showSetup) return keys
-    if (expanded) for (var c = 0; c < containers.length; c++) keys.push("c:" + c)
     for (var u = 0; u < failedUnits.length; u++) keys.push("u:" + u)
+    keys.push("m")
+    if (expanded) for (var c = 0; c < containers.length; c++) keys.push("c:" + c)
     for (var a = 0; a < actions.length; a++) keys.push("a:" + a)
     return keys
-  }
-
-  // How far below a line's top its capitals start.
-  function capInset(metrics) { return metrics.ascent - metrics.tightBoundingRect("H").height }
-
-  // Width over height of what a drawing draws (Glyphs.js).
-  function inkAspect(name) {
-    var ink = Glyphs.glyphs[name].ink
-    return (ink[2] - ink[0]) / (ink[3] - ink[1])
   }
 
   function open() { root.controller.show() }
@@ -146,25 +155,19 @@ Panel {
     return false
   }
 
-  function heroMeta() {
-    if (setupOpen && configured) return "Changes save as you make them"
-    if (!configured) return "Connect a server over SSH"
-    if (online) {
-      var count = client.alertCount
-      return (snap.osName || "Linux") + " · " + (count === 0 ? "all clear" : count + (count === 1 ? " alert" : " alerts"))
-    }
-    if (status === "error") return "Offline"
-    return "Connecting to " + Model.targetHost(client.target)
-  }
-
-  // What the server is doing, a part per line beside its drawing.
-  function serverStatus() {
-    if (!configured) return ""
-    if (client.busyAction.indexOf("reboot:") === 0) return "Rebooting"
-    if (client.busyAction.indexOf("poweroff:") === 0) return "Powering off"
-    if (online) return "Online" + (snap.uptimeSeconds > 0 ? "\nUp " + Model.uptimeLong(snap.uptimeSeconds) : "")
-    if (status === "error") return "Offline\n" + client.errorText
-    return "Connecting\nOpening an SSH session"
+  // What the thing under the cursor does, for the status line. Short and
+  // without names, so the line stays one line and nothing shifts under the
+  // pointer.
+  function hintFor(key) {
+    if (key === "") return ""
+    if (key === "m") return (expanded ? "Hide" : "Show") + " the details (e)"
+    var kind = key.split(":")[0]
+    var i = Number(key.split(":")[1])
+    if (kind === "a" && actions[i]) return actions[i].hint
+    if (kind === "u") return "Restart the service (enter)"
+    if (kind === "c" && containers[i])
+      return Model.containerRunning(containers[i]) ? "Restart (enter), stop (s)" : "Start (enter)"
+    return ""
   }
 
   function moveCursor(delta) {
@@ -190,11 +193,12 @@ Panel {
   }
 
   function activateCursor() {
-    var parts = cursorKey.split(":")
-    var i = Number(parts[1])
-    if (parts[0] === "c") restartContainer(containers[i])
-    else if (parts[0] === "u") restartUnit(failedUnits[i])
-    else if (parts[0] === "a") runAction(actions[i].key)
+    if (cursorKey === "m") return toggleExpanded()
+    var picked = cursorKey.split(":")
+    var i = Number(picked[1])
+    if (picked[0] === "c") restartContainer(containers[i])
+    else if (picked[0] === "u") restartUnit(failedUnits[i])
+    else if (picked[0] === "a") runAction(actions[i].key)
   }
 
   function toggleContainer(container) {
@@ -226,16 +230,6 @@ Panel {
     setOption("panelExpanded", !expanded)
   }
 
-  function alertText() {
-    if (!online) return ""
-    var alerts = []
-    var unhealthy = containers.filter(function(c) { return /unhealthy|restarting/i.test(c.status + " " + c.state) })
-    if (unhealthy.length > 0) alerts.push(unhealthy.length === 1 ? unhealthy[0].name + " is unhealthy" : unhealthy.length + " containers unhealthy")
-    if (rootDisk && rootDisk.percent >= 90) alerts.push("root disk " + Model.percent(rootDisk.percent) + " full")
-    if (snap.rebootRequired) alerts.push("reboot required")
-    return alerts.join(" · ")
-  }
-
   function askConfirm(kind) {
     confirmKind = kind
     confirm.selectedIndex = 0
@@ -243,8 +237,8 @@ Panel {
   }
 
   function confirmMessage() {
-    if (confirmKind === "reboot") return "Reboot " + displayName + "? Everything on it is unavailable until it comes back."
-    if (confirmKind === "poweroff") return "Power off " + displayName + "? You will need physical or out-of-band access to turn it back on."
+    if (confirmKind === "reboot") return "Reboot " + displayName + "? Everything on it is down until it comes back."
+    if (confirmKind === "poweroff") return "Shut down " + displayName + "? Turning it back on takes physical access."
     return ""
   }
 
@@ -253,7 +247,7 @@ Panel {
     confirmKind = ""
     keyCatcher.forceActiveFocus()
     if (!accepted || !client) return
-    client.runAction(kind, "", kind === "reboot" ? "Rebooting " + displayName : "Powering off " + displayName)
+    client.runAction(kind, "", kind === "reboot" ? "Rebooting " + displayName : "Shutting down " + displayName)
   }
 
   function submitSetup() {
@@ -302,7 +296,7 @@ Panel {
 
   function scrollIntoView(item) {
     if (!item || !panelFlick) return
-    var p = item.mapToItem(column, 0, 0)
+    var p = item.mapToItem(body, 0, 0)
     if (p.y < panelFlick.contentY) panelFlick.contentY = Math.max(0, p.y - Style.space(8))
     else if (p.y + item.height > panelFlick.contentY + panelFlick.height)
       panelFlick.contentY = Math.min(panelFlick.contentHeight - panelFlick.height, p.y + item.height - panelFlick.height + Style.space(8))
@@ -316,6 +310,7 @@ Panel {
     }
     cursorActive = false
     cursorKey = ""
+    lineIndex = 0
     if (panelFlick) panelFlick.contentY = 0
     resetForm()
     if (client) {
@@ -342,104 +337,168 @@ Panel {
       cursorKey = cursorTargets.length > 0 ? cursorTargets[0] : ""
   }
 
-  // One part of the server: its drawing and name on the left, and on the
-  // right its reading over the share in use. The drawing runs from the
-  // reading's cap height to the share's baseline, in a column as wide as
-  // the memory stick needs, so every name starts at the same place.
-  component PartRow: Item {
-    id: partRow
-    property var part: null
-    readonly property color tone: part && part.hot ? root.urgent : root.foreground
+  // A hint or a single line has nothing to swap to: finish any fade now, so
+  // the line never sticks half-faded.
+  onHeroHintChanged: if (heroHint !== "") stopLineSwap()
+  onHeroLinesChanged: if (heroLines.length < 2) stopLineSwap()
+
+  function stopLineSwap() {
+    lineSwap.stop()
+    heroCaption.opacity = 1
+  }
+
+  // The same pace and fade as the phrases in Omarchy's power and network
+  // panels. Only runs while the panel is open.
+  Timer {
+    interval: 2800
+    repeat: true
+    running: root.opened && root.heroLines.length > 1 && root.heroHint === ""
+    onTriggered: lineSwap.restart()
+  }
+
+  SequentialAnimation {
+    id: lineSwap
+    PropertyAnimation {
+      target: heroCaption; property: "opacity"
+      to: 0; duration: Style.duration(150); easing.type: Easing.OutCubic
+    }
+    ScriptAction { script: root.lineIndex = (root.lineIndex + 1) % Math.max(1, root.heroLines.length) }
+    PropertyAnimation {
+      target: heroCaption; property: "opacity"
+      to: 1; duration: Style.duration(200); easing.type: Easing.OutCubic
+    }
+  }
+
+  // Text in the panel's font, plain so a name from the server can never turn
+  // into markup.
+  component PanelText: Text {
+    textFormat: Text.PlainText
+    color: root.foreground
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.body
+  }
+
+  // A glyph in the row icon slot.
+  component RowIcon: PanelText {
+    anchors.left: parent.left
+    anchors.leftMargin: Style.space(6)
+    anchors.verticalCenter: parent.verticalCenter
+    width: Style.space(22)
+    horizontalAlignment: Text.AlignHCenter
+    font.pixelSize: Style.font.icon
+  }
+
+  // Gauges side by side, for the main ones and the other disks.
+  component GaugeGrid: Grid {
+    id: grid
+    property var parts: []
+    readonly property real cellWidth: (width - columnSpacing) / 2
 
     width: parent ? parent.width : 0
-    height: Math.max(partValues.implicitHeight, partName.implicitHeight)
+    columns: 2
+    columnSpacing: Style.space(20)
+    rowSpacing: Style.space(12)
 
-    DeviceGlyph {
-      id: partGlyph
-      x: Style.space(2)
-      y: root.capInset(readingType)
-      width: Math.round(root.partIconSize * 1.5)
-      height: root.partIconSize
-      name: partRow.part ? partRow.part.glyph : "cpu"
-      color: root.foreground
-    }
+    Repeater {
+      model: grid.parts
 
-    Text {
-      id: partName
-      anchors.left: partGlyph.right
-      anchors.leftMargin: Style.space(16)
-      anchors.right: partValues.left
-      anchors.rightMargin: Style.space(12)
-      anchors.verticalCenter: partGlyph.verticalCenter
-      textFormat: Text.PlainText
-      wrapMode: Text.Wrap
-      text: partRow.part ? partRow.part.name : ""
-      color: root.foreground
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.subtitle
-    }
-
-    Column {
-      id: partValues
-      anchors.right: parent.right
-      anchors.rightMargin: Style.space(2)
-      spacing: root.lineGap
-
-      Text {
-        anchors.right: parent.right
-        textFormat: Text.PlainText
-        text: partRow.part ? partRow.part.detail : ""
-        color: partRow.part && partRow.part.detail === "--" ? root.dim : partRow.tone
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.title
-        font.bold: true
-      }
-
-      Text {
-        anchors.right: parent.right
-        textFormat: Text.PlainText
-        text: partRow.part ? partRow.part.share : ""
-        color: partRow.part && partRow.part.hot ? root.urgent : root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
+      Gauge {
+        required property var modelData
+        width: grid.cellWidth
+        part: modelData
       }
     }
   }
 
-  // A group's name in bold with what it holds on the right, the way
-  // Batteries heads its AirPods.
-  component GroupHeader: Item {
-    id: groupHeader
-    property string title: ""
-    property string detail: ""
-    property color titleColor: root.foreground
+  // One gauge: icon, name and value, a meter, and a quieter detail under it.
+  // The tooltip holds what does not fit, as on the meters in Omarchy's Agents.
+  component Gauge: Column {
+    id: gauge
+    property var part: null
+    readonly property color tone: part && part.hot ? root.urgent : root.foreground
 
-    width: parent ? parent.width : 0
-    height: Math.max(groupTitle.implicitHeight, groupDetail.implicitHeight)
+    spacing: Style.spacing.labelGap
 
-    Text {
-      id: groupTitle
-      x: Style.space(2)
-      textFormat: Text.PlainText
-      text: groupHeader.title
-      color: groupHeader.titleColor
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.title
-      font.bold: true
+    HoverHandler { id: gaugeHover }
+
+    PanelToolTip {
+      visible: gaugeHover.hovered && text !== ""
+      text: gauge.part ? gauge.part.tip : ""
+      fontFamily: root.fontFamily
     }
 
-    Text {
-      id: groupDetail
+    Item {
+      width: parent.width
+      implicitHeight: Math.max(gaugeName.implicitHeight, gaugeValue.implicitHeight)
+
+      PanelText {
+        id: gaugeIcon
+        anchors.left: parent.left
+        anchors.top: parent.top
+        width: Style.space(20)
+        // The glyph changes too, so a hot reading stands out in every theme.
+        text: gauge.part ? (gauge.part.hot ? "󰀦" : gauge.part.icon) : ""
+        color: gauge.tone
+        font.pixelSize: Style.font.icon
+      }
+
+      PanelText {
+        id: gaugeName
+        anchors.left: gaugeIcon.right
+        anchors.right: gaugeValue.left
+        anchors.rightMargin: Style.space(6)
+        wrapMode: Text.Wrap
+        text: gauge.part ? gauge.part.name : ""
+      }
+
+      PanelText {
+        id: gaugeValue
+        anchors.right: parent.right
+        text: gauge.part ? gauge.part.value : ""
+        color: gauge.part && gauge.part.value === "--" ? root.dim : gauge.tone
+        font.bold: true
+      }
+    }
+
+    LevelBar {
+      width: parent.width
+      level: gauge.part ? gauge.part.level : 0
+      fill: gauge.tone
+    }
+
+    PanelText {
+      width: parent.width
+      wrapMode: Text.Wrap
+      text: gauge.part ? gauge.part.detail : ""
+      color: gauge.part && gauge.part.hot ? root.urgent : root.dim
+      font.pixelSize: Style.font.bodySmall
+    }
+  }
+
+  // A label on the left, its value on the right, as Omarchy's network and
+  // power panels list their readings. A long value wraps; it is never cut.
+  component InfoPair: Item {
+    id: pair
+    property string label: ""
+    property string value: ""
+
+    implicitHeight: Math.max(pairLabel.implicitHeight, pairValue.implicitHeight)
+
+    PanelText {
+      id: pairLabel
+      text: pair.label
+      opacity: 0.6
+      font.pixelSize: Style.font.bodySmall
+    }
+
+    PanelText {
+      id: pairValue
       anchors.right: parent.right
-      anchors.rightMargin: Style.space(2)
-      anchors.baseline: groupTitle.baseline
-      width: parent.width - groupTitle.implicitWidth - Style.space(20)
+      width: Math.min(implicitWidth, parent.width - pairLabel.implicitWidth - Style.space(8))
       horizontalAlignment: Text.AlignRight
-      wrapMode: Text.WordWrap
-      textFormat: Text.PlainText
-      text: groupHeader.detail
-      color: root.dim
-      font.family: root.fontFamily
+      wrapMode: Text.Wrap
+      text: pair.value
+      color: pair.value === "--" ? root.dim : root.foreground
       font.pixelSize: Style.font.bodySmall
     }
   }
@@ -452,7 +511,9 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(380))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(760))
+    contentHeight: panel.fittedContentHeight(header.implicitHeight
+      + (body.implicitHeight > 0 ? Style.space(14) + body.implicitHeight : 0)
+      + (footer.visible ? footer.implicitHeight : 0), Style.space(860))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -476,397 +537,418 @@ Panel {
         else if (key === "b") root.runAction("btop")
         else if (key === "c" || key === ",") root.setupOpen = !root.setupOpen
         else if (key === "e") root.toggleExpanded()
-        else if (key === "s" && root.cursorKey.indexOf("c:") === 0) root.toggleContainer(root.containers[Number(root.cursorKey.split(":")[1])])
+        else if (key === "s" && root.cursorActive && root.cursorKey.indexOf("c:") === 0) root.toggleContainer(root.containers[Number(root.cursorKey.split(":")[1])])
       }
 
+      // ============================================================= header
+      Column {
+        id: header
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        spacing: Style.space(14)
+
+        Item {
+          id: hero
+          width: parent.width
+          implicitHeight: Math.max(heroIconMetrics.implicitHeight, heroLabels.implicitHeight, heroButtons.implicitHeight)
+
+          PanelText {
+            id: heroIconMetrics
+            visible: false
+            text: heroIcon.glyphText
+            font.pixelSize: Style.font.display
+          }
+
+          PulseGlyph {
+            id: heroIcon
+            readonly property string glyphText: root.setupOpen && root.configured ? "󰒓" : "󰒋"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            width: heroIconMetrics.implicitWidth
+            height: heroIconMetrics.implicitHeight
+            active: root.serverWorking
+            opacity: root.online || root.serverWorking || !root.configured || root.setupOpen ? 1 : 0.55
+            glyph: Component {
+              PanelText {
+                text: heroIcon.glyphText
+                color: root.serverAlarm && !root.setupOpen ? root.urgent : root.foreground
+                font.pixelSize: Style.font.display
+              }
+            }
+          }
+
+          Column {
+            id: heroLabels
+            anchors.left: heroIcon.right
+            anchors.leftMargin: Style.space(14)
+            anchors.right: heroButtons.left
+            anchors.rightMargin: Style.space(8)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            PanelText {
+              width: parent.width
+              wrapMode: Text.Wrap
+              text: root.setupOpen && root.configured ? "Settings" : root.displayName
+              font.pixelSize: Style.font.title
+              font.bold: true
+            }
+
+            PanelText {
+              id: heroCaption
+              width: parent.width
+              wrapMode: Text.Wrap
+              text: root.heroLine.toUpperCase()
+              color: root.heroUrgent ? root.urgent : root.dim
+              font.pixelSize: Style.font.caption
+              font.bold: true
+              font.letterSpacing: 1.2
+            }
+          }
+
+          Row {
+            id: heroButtons
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+
+            PanelActionButton {
+              visible: root.configured && !root.setupOpen
+              iconText: "󰑐"
+              tooltipText: "Refresh (r)"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.client.retry()
+            }
+
+            PanelActionButton {
+              visible: root.configured
+              iconText: root.setupOpen ? "󰁍" : "󰒓"
+              tooltipText: root.setupOpen ? "Back (c)" : "Settings (c)"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.setupOpen = !root.setupOpen
+            }
+          }
+        }
+
+        PanelSeparator {
+          visible: body.implicitHeight > 0
+          foreground: root.foreground
+        }
+      }
+
+      // ========================================================= scrolls
       Flickable {
         id: panelFlick
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.topMargin: Style.space(14)
+        anchors.bottom: footer.visible ? footer.top : parent.bottom
         contentWidth: width
-        contentHeight: column.implicitHeight
+        contentHeight: body.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         flickableDirection: Flickable.VerticalFlick
         interactive: contentHeight > height
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        // Always showing when there is more, since the clip can land between
+        // two rows and make the panel look finished. The body leaves it room.
+        ScrollBar.vertical: ScrollBar { id: panelScroll; policy: panelFlick.interactive ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff }
 
         Column {
-          id: column
-          width: panelFlick.width
+          id: body
+          width: panelFlick.width - (panelFlick.interactive ? panelScroll.width + Style.space(4) : 0)
           spacing: Style.space(14)
 
-          PanelHero {
-            id: hero
-            width: parent.width
-            title: root.setupOpen && root.configured ? "Settings" : root.displayName
-            meta: root.heroMeta()
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            iconComponent: Component {
-              Text {
-                textFormat: Text.PlainText
-                text: "󰒋"
-                color: root.status === "error" && root.client && !root.client.needsUser ? root.urgent : root.foreground
-                opacity: root.online || !root.configured ? 1 : 0.55
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.display
-              }
-            }
-            trailingControl: Component {
-              Row {
-                spacing: Style.space(2)
+          // ===================================================== dashboard
+          Repeater {
+            model: root.showDashboard ? root.notices : []
 
-                PanelActionButton {
-                  visible: root.online && !root.setupOpen
-                  iconText: root.expanded ? "󰅃" : "󰅀"
-                  tooltipText: root.expanded ? "Less (e)" : "More: every disk, containers and processes (e)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.toggleExpanded()
-                }
-
-                PanelActionButton {
-                  visible: root.configured && !root.setupOpen
-                  iconText: "󰑐"
-                  tooltipText: "Refresh (r)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.client.retry()
-                }
-
-                PanelActionButton {
-                  iconText: root.setupOpen ? "󰁍" : "󰒓"
-                  tooltipText: root.setupOpen ? "Back to the dashboard (c)" : "Settings: bar, alerts, connection and updates (c)"
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  onClicked: root.setupOpen = !root.setupOpen
-                }
-              }
+            Notice {
+              required property var modelData
+              width: parent ? parent.width : 0
+              icon: modelData.icon
+              text: modelData.text
+              tone: modelData.tone
+              actionLabel: modelData.actionLabel || ""
+              busy: !!modelData.busy
+              dismissable: !!modelData.dismissable
+              foreground: root.foreground
+              accent: root.accent
+              urgent: root.urgent
+              fontFamily: root.fontFamily
+              onActioned: root.noticeAction(modelData)
+              onDismissed: root.dismissNotice(modelData)
             }
           }
 
-          PanelSeparator { foreground: root.foreground }
-
-          // ======================================================= dashboard
-          // Roomier than the settings: the drawings need air around them.
+          // ------------------------------------------------ failed services
           Column {
-            visible: !root.showSetup
+            visible: root.showDashboard && root.failedUnits.length > 0
             width: parent.width
-            spacing: root.groupGap
+            spacing: Style.space(6)
 
-            Repeater {
-              model: root.notices
-
-              Notice {
-                required property var modelData
-                width: parent ? parent.width : 0
-                icon: modelData.icon
-                text: modelData.text
-                tone: modelData.tone
-                actionLabel: modelData.actionLabel || ""
-                busy: !!modelData.busy
-                dismissable: !!modelData.dismissable
-                foreground: root.foreground
-                accent: root.accent
-                urgent: root.urgent
-                fontFamily: root.fontFamily
-                onActioned: root.noticeAction(modelData)
-                onDismissed: root.dismissNotice(modelData)
-              }
-            }
-
-            // Type measured once, so drawings can line up with text: from the
-            // cap height of a first line to the baseline of a last.
-            FontMetrics { id: statusType; font.family: root.fontFamily; font.pixelSize: Style.font.subtitle }
-            FontMetrics { id: readingType; font.family: root.fontFamily; font.pixelSize: Style.font.title; font.bold: true }
-            FontMetrics { id: smallType; font.family: root.fontFamily; font.pixelSize: Style.font.bodySmall }
-
-            // ------------------------------------------------------- server
-            // The server drawn as tall as what it is doing and its readings
-            // beside it, as Batteries draws the laptop.
-            Item {
-              visible: root.configured
-              width: parent.width
-              height: serverInfo.implicitHeight
-
-              // From the status's cap height to the last row's baseline, in
-              // the drawing's own proportions. The readings have a fixed
-              // width, so the drawing can size from their height without a
-              // loop; past the room left it shrinks and centres.
-              Item {
-                id: serverArt
-                readonly property real aspect: root.inkAspect("server")
-                readonly property real span: serverInfo.implicitHeight - root.capInset(statusType) - smallType.descent
-                readonly property real room: parent.width - serverInfo.width - Style.space(20) - x
-                x: Style.space(2)
-                width: Math.min(room, Math.round(span * aspect))
-                height: Math.round(width / aspect)
-                y: root.capInset(statusType) + (span - height) / 2
-
-                PulseGlyph {
-                  anchors.fill: parent
-                  active: root.serverWorking
-                  opacity: root.online || root.serverWorking ? 1 : 0.6
-                  glyph: Component { DeviceGlyph { name: "server"; color: root.foreground } }
-                }
-              }
-
-              Column {
-                id: serverInfo
-                anchors.right: parent.right
-                anchors.rightMargin: Style.space(2)
-                width: Style.space(156)
-                spacing: Style.space(4)
-
-                Text {
-                  width: parent.width
-                  bottomPadding: Style.space(4)
-                  textFormat: Text.PlainText
-                  wrapMode: Text.Wrap
-                  text: root.serverStatus()
-                  color: root.foreground
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.subtitle
-                }
-
-                // Label on the left, reading on the right: the network, the
-                // containers and the system.
-                Repeater {
-                  model: root.facts
-
-                  Item {
-                    required property var modelData
-                    width: serverInfo.width
-                    height: Math.max(factLabel.implicitHeight, factValue.implicitHeight)
-
-                    Text {
-                      id: factLabel
-                      textFormat: Text.PlainText
-                      text: modelData.label
-                      color: root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-
-                    Text {
-                      id: factValue
-                      anchors.right: parent.right
-                      width: Math.min(implicitWidth, parent.width - factLabel.implicitWidth - Style.space(10))
-                      horizontalAlignment: Text.AlignRight
-                      wrapMode: Text.Wrap
-                      textFormat: Text.PlainText
-                      text: modelData.value
-                      color: modelData.value === "--" ? root.dim : root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
-                    }
-                  }
-                }
-              }
-            }
-
-            Caption {
-              visible: root.configured && root.status === "error" && root.errorKind !== "hostkey"
-              width: parent.width
-              leftPadding: Style.space(2)
-              wrapMode: Text.WordWrap
-              text: "Retrying every 30 seconds. Press r to try now."
+            SectionHeader {
+              icon: "󰀦"
+              title: "FAILED SERVICES"
+              detail: root.failedUnits.length + " FAILED"
+              detailColor: root.urgent
               foreground: root.foreground
               fontFamily: root.fontFamily
             }
 
-            // -------------------------------------------------------- parts
-            PanelSeparator { visible: root.parts.length > 0; foreground: root.foreground }
+            Repeater {
+              model: root.failedUnits
+
+              UnitRow {
+                required property var modelData
+                required property int index
+                width: parent ? parent.width : 0
+                unit: modelData
+                rowKey: "u:" + index
+              }
+            }
+          }
+
+          // --------------------------------------------------------- gauges
+          GaugeGrid {
+            visible: root.showDashboard && root.parts.length > 0
+            parts: root.parts
+          }
+
+          // ------------------------------------------------------- readings
+          Grid {
+            id: factGrid
+            visible: root.showDashboard && root.facts.length > 0
+            width: parent.width
+            columns: 2
+            columnSpacing: Style.space(20)
+            rowSpacing: Style.spacing.labelGap
+
+            readonly property real cellWidth: (width - columnSpacing) / 2
+
+            Repeater {
+              model: root.facts
+
+              InfoPair {
+                required property var modelData
+                width: factGrid.cellWidth
+                label: modelData.label
+                value: modelData.value
+              }
+            }
+          }
+
+          // ---------------------------------------------------- details row
+          CursorSurface {
+            id: detailsRow
+            visible: root.showDashboard && root.detailsLabel !== ""
+            width: parent.width
+            hasCursor: root.cursorActive && root.cursorKey === "m"
+            foreground: root.foreground
+            implicitHeight: detailsText.implicitHeight + Style.spacing.xl
+            onHasCursorChanged: if (hasCursor && root.keyboardCursor) root.scrollIntoView(detailsRow)
+
+            HoverHandler {
+              onHoveredChanged: if (hovered) root.hover("m"); else root.unhover("m")
+            }
+
+            TapHandler {
+              onTapped: root.toggleExpanded()
+            }
+
+            PanelText {
+              id: detailsText
+              anchors.left: parent.left
+              anchors.leftMargin: Style.space(6)
+              anchors.right: detailsIcon.left
+              anchors.rightMargin: Style.space(8)
+              anchors.verticalCenter: parent.verticalCenter
+              wrapMode: Text.Wrap
+              text: root.detailsLabel
+            }
+
+            PanelText {
+              id: detailsIcon
+              anchors.right: parent.right
+              anchors.rightMargin: Style.space(6)
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.expanded ? "󰅃" : "󰅀"
+              font.pixelSize: Style.font.icon
+            }
+          }
+
+          // ---------------------------------------------------------- disks
+          Column {
+            visible: root.showDetails && root.otherDisks.length > 0
+            width: parent.width
+            spacing: Style.space(10)
+
+            SectionHeader {
+              icon: "󰋊"
+              title: "DISKS"
+              detail: root.otherDisks.length + " MORE"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            GaugeGrid { parts: root.otherDisks }
+          }
+
+          // ------------------------------------------------------ processes
+          Column {
+            visible: root.showDetails && root.processes.length > 0
+            width: parent.width
+            spacing: Style.space(6)
+
+            Item {
+              width: parent.width
+              implicitHeight: processHeader.implicitHeight
+
+              SectionHeader {
+                id: processHeader
+                icon: "󰐰"
+                title: "PROCESSES"
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+              }
+
+              PanelText {
+                anchors.right: memoryColumn.left
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(56)
+                horizontalAlignment: Text.AlignRight
+                text: "CPU"
+                color: root.dim
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+
+              PanelText {
+                id: memoryColumn
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: Style.space(72)
+                horizontalAlignment: Text.AlignRight
+                text: "MEMORY"
+                color: root.dim
+                font.pixelSize: Style.font.caption
+                font.bold: true
+              }
+            }
 
             Column {
-              visible: root.parts.length > 0
               width: parent.width
-              spacing: root.groupGap
+              spacing: Style.spacing.labelGap
 
               Repeater {
-                model: root.parts
+                model: root.processes
 
-                PartRow {
+                Item {
                   required property var modelData
-                  part: modelData
-                }
-              }
-            }
+                  width: parent ? parent.width : 0
+                  implicitHeight: Math.max(procName.implicitHeight, procCpu.implicitHeight)
 
-            // ----------------------------------------------- failed services
-            PanelSeparator { visible: root.failedUnits.length > 0; foreground: root.foreground }
-
-            Column {
-              visible: root.failedUnits.length > 0
-              width: parent.width
-              spacing: Style.space(12)
-
-              GroupHeader {
-                title: "Failed services"
-                titleColor: root.urgent
-                detail: root.failedUnits.length + " failed"
-              }
-
-              Column {
-                width: parent.width
-                spacing: Style.space(2)
-
-                Repeater {
-                  model: root.failedUnits
-
-                  UnitRow {
-                    required property var modelData
-                    required property int index
-                    width: parent ? parent.width : 0
-                    unit: modelData
-                    rowKey: "u:" + index
+                  PanelText {
+                    id: procName
+                    width: procCpu.x - Style.space(10)
+                    wrapMode: Text.Wrap
+                    text: modelData.name
+                    opacity: 0.6
+                    font.pixelSize: Style.font.bodySmall
                   }
-                }
-              }
-            }
 
-            // --------------------------------------------------- containers
-            PanelSeparator { visible: root.showDetails && root.containers.length > 0; foreground: root.foreground }
-
-            Column {
-              visible: root.showDetails && root.containers.length > 0
-              width: parent.width
-              spacing: Style.space(12)
-
-              GroupHeader {
-                title: "Containers"
-                detail: root.runningContainers + " of " + root.containers.length + " running"
-              }
-
-              Column {
-                width: parent.width
-                spacing: Style.space(2)
-
-                Repeater {
-                  model: root.containers
-
-                  ContainerRow {
-                    required property var modelData
-                    required property int index
-                    width: parent ? parent.width : 0
-                    container: modelData
-                    rowKey: "c:" + index
+                  PanelText {
+                    id: procCpu
+                    anchors.right: procMem.left
+                    width: Style.space(56)
+                    horizontalAlignment: Text.AlignRight
+                    text: modelData.cpu.toFixed(1) + "%"
+                    color: modelData.cpu >= 80 ? root.urgent : root.foreground
+                    font.pixelSize: Style.font.bodySmall
                   }
-                }
-              }
-            }
 
-            // ---------------------------------------------------- processes
-            PanelSeparator { visible: root.showDetails && root.processes.length > 0; foreground: root.foreground }
-
-            Column {
-              visible: root.showDetails && root.processes.length > 0
-              width: parent.width
-              spacing: Style.space(18)
-
-              GroupHeader {
-                title: "Processes"
-                detail: "CPU and memory"
-              }
-
-              // Label on the left, readings on the right, as beside the
-              // server.
-              Column {
-                width: parent.width
-                spacing: Style.space(4)
-
-                Repeater {
-                  model: root.processes
-
-                  Item {
-                    required property var modelData
-                    width: parent ? parent.width : 0
-                    height: Math.max(procName.implicitHeight, procCpu.implicitHeight)
-
-                    Text {
-                      id: procName
-                      x: Style.space(2)
-                      width: procCpu.x - x - Style.space(10)
-                      textFormat: Text.PlainText
-                      wrapMode: Text.Wrap
-                      text: modelData.name
-                      color: root.dim
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                    }
-
-                    Text {
-                      id: procCpu
-                      anchors.right: procMem.left
-                      width: Style.space(56)
-                      horizontalAlignment: Text.AlignRight
-                      textFormat: Text.PlainText
-                      text: modelData.cpu.toFixed(1) + "%"
-                      color: modelData.cpu >= 80 ? root.urgent : root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
-                    }
-
-                    Text {
-                      id: procMem
-                      anchors.right: parent.right
-                      anchors.rightMargin: Style.space(2)
-                      width: Style.space(72)
-                      horizontalAlignment: Text.AlignRight
-                      textFormat: Text.PlainText
-                      text: Model.size(modelData.rssBytes)
-                      color: root.foreground
-                      font.family: root.fontFamily
-                      font.pixelSize: Style.font.bodySmall
-                      font.bold: true
-                    }
+                  PanelText {
+                    id: procMem
+                    anchors.right: parent.right
+                    width: Style.space(72)
+                    horizontalAlignment: Text.AlignRight
+                    text: Model.size(modelData.rssBytes)
+                    font.pixelSize: Style.font.bodySmall
                   }
-                }
-              }
-            }
-
-            // ------------------------------------------------------ actions
-            PanelSeparator { visible: root.online; foreground: root.foreground }
-
-            // One row, four equal buttons, unboxed like the rest of the view.
-            Row {
-              id: actionRow
-              visible: root.online
-              width: parent.width
-              spacing: Style.space(4)
-
-              Repeater {
-                model: root.actions
-
-                Button {
-                  id: actionButton
-                  required property var modelData
-                  required property int index
-                  readonly property string key: "a:" + index
-                  width: (actionRow.width - actionRow.spacing * (root.actions.length - 1)) / root.actions.length
-                  text: modelData.text
-                  iconText: modelData.icon
-                  fontSize: Style.font.bodySmall
-                  iconSize: Style.font.body
-                  tooltipText: modelData.hint
-                  hasCursor: root.cursorActive && root.cursorKey === key
-                  foreground: root.foreground
-                  fontFamily: root.fontFamily
-                  enabled: !(root.client && root.client.busyAction !== "" && (modelData.key === "reboot" || modelData.key === "poweroff"))
-                  onHovered: function(on) { if (on) root.hover(actionButton.key); else root.unhover(actionButton.key) }
-                  onClicked: root.runAction(modelData.key)
                 }
               }
             }
           }
 
-          // ======================================================== settings
+          // --------------------------------------------------------- system
+          Column {
+            visible: root.showDetails && root.systemFacts.length > 0
+            width: parent.width
+            spacing: Style.space(6)
+
+            SectionHeader {
+              icon: "󰌽"
+              title: "SYSTEM"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Column {
+              width: parent.width
+              spacing: Style.spacing.labelGap
+
+              Repeater {
+                model: root.systemFacts
+
+                InfoPair {
+                  required property var modelData
+                  width: parent ? parent.width : 0
+                  label: modelData.label
+                  value: modelData.value
+                }
+              }
+            }
+          }
+
+          // ----------------------------------------------------- containers
+          Column {
+            visible: root.showDetails && root.containers.length > 0
+            width: parent.width
+            spacing: Style.space(6)
+
+            SectionHeader {
+              icon: "󰡨"
+              title: "CONTAINERS"
+              detail: root.runningContainers + " OF " + root.containers.length + " RUNNING"
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+            }
+
+            Column {
+              width: parent.width
+
+              Repeater {
+                model: root.containers
+
+                ContainerRow {
+                  required property var modelData
+                  required property int index
+                  width: parent ? parent.width : 0
+                  container: modelData
+                  rowKey: "c:" + index
+                }
+              }
+            }
+          }
+
+          // ====================================================== settings
           Column {
             visible: root.showSetup
             width: parent.width
-            spacing: root.sectionGap
+            spacing: Style.space(12)
 
             SectionHeader {
               visible: root.configured
@@ -882,8 +964,8 @@ Panel {
               visible: root.configured
               width: parent.width
               columns: 2
-              columnSpacing: root.tileGap
-              rowSpacing: root.tileGap
+              columnSpacing: Style.space(8)
+              rowSpacing: Style.space(8)
 
               readonly property real tileWidth: (width - columnSpacing) / 2
 
@@ -910,7 +992,7 @@ Panel {
 
             SectionHeader {
               visible: root.configured
-              icon: "󰂚"
+              icon: "󰕮"
               title: "ALERTS AND PANEL"
               foreground: root.foreground
               fontFamily: root.fontFamily
@@ -920,7 +1002,7 @@ Panel {
               visible: root.configured
               icon: "󰂚"
               label: "Notify me"
-              hint: "When the server drops or comes back, a container turns unhealthy, a disk passes 90% or a service fails"
+              hint: "Outages, unhealthy containers, full disks, failed services"
               checked: root.setting("notify", true) === true
               foreground: root.foreground
               accent: root.accent
@@ -930,9 +1012,8 @@ Panel {
 
             SwitchRow {
               visible: root.configured
-              icon: "󰁌"
-              label: "Open expanded"
-              hint: "Every disk, containers and processes without pressing More"
+              icon: "󰅀"
+              label: "Open with details"
               checked: root.expanded
               foreground: root.foreground
               accent: root.accent
@@ -942,7 +1023,7 @@ Panel {
 
             PanelSeparator { visible: root.configured; foreground: root.foreground }
 
-            // ---------------------------------------------------- connect form
+            // ------------------------------------------------- connect form
             Column {
               id: setupForm
               width: parent.width
@@ -1001,7 +1082,7 @@ Panel {
                 foreground: root.foreground
                 font.family: root.fontFamily
                 placeholderText: root.configured && root.errorKind !== "nopassword"
-                  ? "Password (leave empty to keep the saved one)"
+                  ? "Password (empty keeps the saved one)"
                   : "Password, stored in your keyring"
                 onAccepted: root.submitSetup()
                 Keys.onEscapePressed: keyCatcher.forceActiveFocus()
@@ -1038,7 +1119,7 @@ Panel {
                     required property var modelData
                     text: modelData.name
                     iconText: modelData.os === "linux" ? "󰌽" : (modelData.os === "windows" ? "󰖳" : "󰄜")
-                    tooltipText: modelData.ip + (modelData.online ? "" : " · offline")
+                    tooltipText: modelData.ip + (modelData.online ? "" : ", offline")
                     bordered: true
                     opacity: modelData.online ? 1 : 0.5
                     fontSize: Style.font.bodySmall
@@ -1051,12 +1132,13 @@ Panel {
               }
 
               Row {
-                spacing: Style.space(8)
+                spacing: Style.space(6)
 
                 Button {
                   text: "Connect"
                   iconText: "󰌘"
                   bordered: true
+                  fontSize: Style.font.bodySmall
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: root.submitSetup()
@@ -1066,6 +1148,8 @@ Panel {
                   visible: root.configured
                   text: "Forget password"
                   iconText: "󰅖"
+                  bordered: true
+                  fontSize: Style.font.bodySmall
                   foreground: root.foreground
                   fontFamily: root.fontFamily
                   onClicked: {
@@ -1076,7 +1160,7 @@ Panel {
               }
             }
 
-            // -------------------------------------------- about and updates
+            // ------------------------------------------- about and updates
             PanelSeparator { foreground: root.foreground }
 
             UpdateSection {
@@ -1103,6 +1187,51 @@ Panel {
         }
       }
 
+      // ============================================================= footer
+      // Fixed, so the actions stay in reach however long the list above gets.
+      Column {
+        id: footer
+        visible: root.online && root.showDashboard
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        topPadding: Style.space(14)
+        spacing: Style.space(14)
+
+        PanelSeparator { foreground: root.foreground }
+
+        Row {
+          id: actionRow
+          width: parent.width
+          spacing: Style.space(6)
+
+          Repeater {
+            model: root.actions
+
+            Button {
+              id: actionButton
+              required property var modelData
+              required property int index
+              readonly property string key: "a:" + index
+              width: (actionRow.width - actionRow.spacing * (root.actions.length - 1)) / root.actions.length
+              text: modelData.text
+              iconText: modelData.icon
+              bordered: true
+              fontSize: Style.font.bodySmall
+              iconSize: Style.font.icon
+              horizontalPadding: Style.space(6)
+              verticalPadding: Style.spacing.controlPaddingY + Style.space(2)
+              hasCursor: root.cursorActive && root.cursorKey === key
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              enabled: !(root.client && root.client.busyAction !== "" && (modelData.key === "reboot" || modelData.key === "poweroff"))
+              onHovered: function(on) { if (on) root.hover(actionButton.key); else root.unhover(actionButton.key) }
+              onClicked: root.runAction(modelData.key)
+            }
+          }
+        }
+      }
+
       Item {
         id: confirmKeys
         anchors.fill: parent
@@ -1117,7 +1246,7 @@ Panel {
           anchors.fill: parent
           opened: root.confirmKind !== ""
           message: root.confirmMessage()
-          confirmText: root.confirmKind === "poweroff" ? "Power off" : "Reboot"
+          confirmText: root.confirmKind === "poweroff" ? "Shut down" : "Reboot"
           foreground: root.foreground
           selectedText: root.urgent
           fontFamily: root.fontFamily
@@ -1128,8 +1257,9 @@ Panel {
     }
   }
 
-  // A container: its name over what it is doing and its image, with stop or
-  // start and restart on the right. Stopped ones dim, unhealthy ones urgent.
+  // A container on one line: its state, name and how long it has been up. The
+  // cursor swaps the status for stop or start and restart; the image is the
+  // name's tooltip. Stopped ones dim, unhealthy ones urgent.
   component ContainerRow: CursorSurface {
     id: row
 
@@ -1142,43 +1272,56 @@ Panel {
 
     hasCursor: root.cursorActive && root.cursorKey === rowKey
     foreground: root.foreground
-    implicitHeight: rowText.implicitHeight + Style.space(12)
+    implicitHeight: Math.max(rowName.implicitHeight + Style.spacing.xl, rowStatus.implicitHeight + Style.spacing.xl, buttons.implicitHeight + Style.spacing.xxs)
     onHasCursorChanged: if (hasCursor && root.keyboardCursor) root.scrollIntoView(row)
 
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      acceptedButtons: Qt.NoButton
-      onEntered: root.hover(row.rowKey)
-      onExited: root.unhover(row.rowKey)
+    HoverHandler {
+      onHoveredChanged: if (hovered) root.hover(row.rowKey); else root.unhover(row.rowKey)
     }
 
-    Column {
-      id: rowText
-      anchors.left: parent.left
+    RowIcon {
+      id: rowIcon
+      text: row.unhealthy ? "󰀦" : (row.running ? "󰗠" : "󰝦")
+      color: row.unhealthy ? root.urgent : (row.running ? root.foreground : root.dim)
+    }
+
+    PanelText {
+      id: rowName
+      anchors.left: rowIcon.right
       anchors.leftMargin: Style.space(8)
-      anchors.right: buttons.left
+      anchors.right: statusBox.left
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: root.lineGap
+      wrapMode: Text.Wrap
+      text: row.container ? row.container.name : ""
+      color: row.unhealthy ? root.urgent : (row.running ? root.foreground : root.dim)
 
-      Text {
-        width: parent.width
-        textFormat: Text.PlainText
-        wrapMode: Text.Wrap
-        text: row.container ? row.container.name : ""
-        color: row.unhealthy ? root.urgent : (row.running ? root.foreground : root.dim)
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.subtitle
+      HoverHandler { id: nameHover }
+
+      PanelToolTip {
+        visible: nameHover.hovered && text !== ""
+        text: row.container ? row.container.image : ""
+        fontFamily: root.fontFamily
       }
+    }
 
-      Text {
+    Item {
+      id: statusBox
+      anchors.right: parent.right
+      anchors.rightMargin: Style.space(6)
+      anchors.verticalCenter: parent.verticalCenter
+      // At least the buttons' room, so swapping to them never moves the name.
+      width: Math.max(Style.space(50), Math.min(rowStatus.implicitWidth, Style.space(132)))
+      height: rowStatus.implicitHeight
+
+      PanelText {
+        id: rowStatus
         width: parent.width
-        textFormat: Text.PlainText
+        visible: !buttons.visible
+        horizontalAlignment: Text.AlignRight
         wrapMode: Text.Wrap
-        text: row.busy ? "Working…" : (row.container ? Model.containerStatus(row.container) + " · " + row.container.image : "")
+        text: row.busy ? "Working…" : (row.container ? Model.containerStatus(row.container) : "")
         color: row.unhealthy ? root.urgent : root.dim
-        font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
       }
     }
@@ -1189,6 +1332,7 @@ Panel {
       anchors.rightMargin: Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(2)
+      visible: row.hasCursor && !row.busy
 
       PanelActionButton {
         iconText: row.running ? "󰓛" : "󰐊"
@@ -1196,7 +1340,7 @@ Panel {
         foreground: root.foreground
         hoverColor: row.running ? root.urgent : root.foreground
         fontFamily: root.fontFamily
-        enabled: !row.busy && !!root.client && root.client.busyAction === ""
+        enabled: !!root.client && root.client.busyAction === ""
         onClicked: root.toggleContainer(row.container)
       }
 
@@ -1206,7 +1350,7 @@ Panel {
         tooltipText: "Restart (enter)"
         foreground: root.foreground
         fontFamily: root.fontFamily
-        enabled: !row.busy && !!root.client && root.client.busyAction === ""
+        enabled: !!root.client && root.client.busyAction === ""
         onClicked: root.restartContainer(row.container)
       }
     }
@@ -1223,45 +1367,42 @@ Panel {
 
     hasCursor: root.cursorActive && root.cursorKey === rowKey
     foreground: root.foreground
-    implicitHeight: unitText.implicitHeight + Style.space(12)
+    implicitHeight: Math.max(unitText.implicitHeight, restart.implicitHeight) + Style.spacing.rowPaddingX
     onHasCursorChanged: if (hasCursor && root.keyboardCursor) root.scrollIntoView(unitRow)
 
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      acceptedButtons: Qt.NoButton
-      onEntered: root.hover(unitRow.rowKey)
-      onExited: root.unhover(unitRow.rowKey)
+    HoverHandler {
+      onHoveredChanged: if (hovered) root.hover(unitRow.rowKey); else root.unhover(unitRow.rowKey)
+    }
+
+    RowIcon {
+      id: unitIcon
+      text: "󰅚"
+      color: root.urgent
     }
 
     Column {
       id: unitText
-      anchors.left: parent.left
+      anchors.left: unitIcon.right
       anchors.leftMargin: Style.space(8)
       anchors.right: restart.left
       anchors.rightMargin: Style.space(8)
       anchors.verticalCenter: parent.verticalCenter
-      spacing: root.lineGap
+      spacing: Style.space(1)
 
-      Text {
+      PanelText {
         width: parent.width
-        textFormat: Text.PlainText
         wrapMode: Text.Wrap
         text: unitRow.unit ? unitRow.unit.name : ""
         color: root.urgent
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.subtitle
       }
 
-      Text {
+      PanelText {
         visible: text !== ""
         width: parent.width
-        textFormat: Text.PlainText
         wrapMode: Text.Wrap
         text: unitRow.busy ? "Restarting…" : (unitRow.unit ? unitRow.unit.description : "")
         color: root.dim
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
+        font.pixelSize: Style.font.caption
       }
     }
 

@@ -6,8 +6,8 @@ How Server Dashboard is put together, for anyone (or any agent) changing it. The
 
 - `BarWidget.qml`: the bar entry, once per monitor. The first instance (the leader) loads `ServerClient.qml`; the others read the leader's. Hosts `Panel.qml` and the IPC target.
 - `ServerClient.qml`: polling, history, actions and notifications for the one server.
-- `Panel.qml`: the dashboard, in Batteries' style: the server drawn big with its readings beside it, then a row per part (processor, temperature, memory, disks), each drawing lined up with the text beside it, from the cap height of the first line to the baseline of the last (the `FontMetrics` in the panel measure that). Settings keep the panel kit (below).
-- `DeviceGlyph.qml`, `Glyphs.js`: the drawings, solid with fine details cut out, as in Batteries. `scripts/draw-glyphs.py` builds them from plain shapes and regenerates `Glyphs.js`. `PulseGlyph.qml` is Batteries' charging pulse, here while the server connects or reboots.
+- `Panel.qml`: the dashboard, built to the numbers below. A fixed header (the hero and its status line), a fixed row of actions at the bottom, and between them what scrolls: banners, failed services, a two-column gauge grid (kit `LevelBar`), a two-column grid of readings, and the details row that opens the other disks, processes, the system and containers. Settings and the connect form replace the middle and keep the panel kit.
+- `PulseGlyph.qml`: Batteries' charging pulse, on the hero icon while the server connects or reboots. It steps at 20 Hz rather than every frame; keep any motion here that light.
 - `Updater.qml`, `Update.js`, `bin/plugin-update`: the shared updater, hosted by `ServerClient.qml`.
 - `WidgetSettings.qml`: this widget's `shell.json` entry, read from the file (see below).
 - `Model.js`: parses the probe, rates, formatting and the alert rules. Tested by `tests/model.test.js`.
@@ -24,6 +24,20 @@ omarchy-shell io.github.t3lluz.server-dashboard status | jq
 ```
 
 Never put a password or token on a command line or in `shell.json`; `bin/server-dash` reads it from the keyring.
+
+## Panel look
+
+The numbers come from Omarchy's own panels (network, power, audio, tailscale, agents), through `Style.space()` and `Style.font` so they scale. Copy these rather than inventing new ones, so Server Dashboard, Batteries and Sonus stay one family.
+
+- Width `space(380)`, gaps `space(14)` between sections.
+- Hero: Nerd Font glyph at `font.display`, `space(14)` to the labels, title at `font.title` bold, status line at `font.caption` bold with 1.2 letter spacing, in capitals, `Qt.darker(foreground, 1.4)`.
+- Row icons: Nerd Font glyph at `font.icon`, in a `space(22)` slot with `space(8)` to the text. Rows at `font.body` with captions under them, padded by `spacing.xl` or `spacing.rowPaddingX`.
+- Readings: `font.bodySmall`, labels at 0.6 opacity, `spacing.labelGap` between lines, `space(20)` between columns.
+- Icon buttons: `PanelActionButton`, with a tooltip. Button rows: `Button`, bordered, `space(6)` apart.
+
+No drawings, no text taller than `font.display`, no paragraphs. Explain with titles, icons, state labels and the status line: it rotates every 2.8 seconds with the same fade as Omarchy's power and network phrases, and while the cursor is on something it says what that does. Keep those hints short and free of names, because a line that wraps would shift rows under the pointer.
+
+Alerts use `Commons.Color.urgent`, not `bar.urgent`, which follows `bar.active`. A monochrome theme makes urgent a quiet grey, so the panel falls back to the foreground there and hot gauges swap their icon for an alert glyph.
 
 ## Panel kit
 

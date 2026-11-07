@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.3.0-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.4.0-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
@@ -16,8 +16,8 @@
 ## Features
 
 - **The bar shows what you pick:** a server mark with CPU and RAM by default, plus root disk, CPU temperature and network rates, or none. The mark turns urgent when the server is unreachable or something needs you.
-- **A panel in the Batteries style:** the server drawn big with its uptime, network rates, running containers, kernel, tasks and swap beside it, then the processor, its temperature, memory and root disk, each drawn with its reading on the right (load, °C, used of total) and the share in use under it. Alerts, failed systemd services with restart, and SSH, btop, reboot and power off. The server pulses while it connects or reboots.
-- **More** (the chevron at the top, or `e`) adds every real filesystem, Docker containers with start, stop and restart, and the top processes. It reopens the way you left it.
+- **A dense panel built to Omarchy's own panel sizes:** a line under the title that says how the server is and, on hover, what the thing under the pointer does. Gauges for the processor, temperature, memory and root disk, then download, upload, uptime, containers, tasks and swap. Alerts and failed systemd services with restart come first when there are any, and SSH, btop, reboot and shutdown stay at the bottom however far the rest scrolls. The icon pulses while the server connects or reboots.
+- **The details row** (or `e`) opens the other disks, the top processes, the system, and Docker containers with start, stop and restart. It reopens the way you left it.
 - **Notifications:** one when the server stops answering and one when it is back, and one for each new problem: a container turning unhealthy or restart-looping, a filesystem passing 90%, a systemd unit failing. Starting the shell never notifies about what was already wrong.
 - **Nothing on the server:** every poll is one shell command reading `/proc`, `/sys`, `df`, `ps`, `docker` and `systemctl`, over a single multiplexed SSH session, so the server sees one login rather than one every few seconds.
 - **Updates from the panel:** Settings says when a new version is on GitHub and installs it with one click. Edits you made in the plugin folder are kept in `git stash`, not lost.
@@ -48,16 +48,16 @@ The password is stored in your keyring (GNOME Keyring, via `secret-tool`) and ha
 | Left click | Open or close the dashboard |
 | Middle click | Refresh now |
 | Right click | SSH shell on the server |
-| `j` / `k`, arrows | Move between containers, services and actions |
+| `j` / `k`, arrows | Move between services, the details row, containers and actions |
 | `enter` | Restart the selected container or service, or run the action |
 | `s` | Start or stop the selected container |
-| `e` | Expand or collapse |
+| `e` | Show or hide the details |
 | `t` / `b` | SSH shell / btop (falls back to htop, then top) |
 | `r` | Refresh |
 | `c` | Settings: bar stats, alerts, panel and connection |
 | `esc` | Close |
 
-Reboot, power off and service restarts use `sudo` on the server, fed the saved password. Container actions try `docker` first and fall back to `sudo`.
+Reboot, shutdown and service restarts use `sudo` on the server, fed the saved password. Container actions try `docker` first and fall back to `sudo`.
 
 ## Settings
 
@@ -75,7 +75,7 @@ The ⚙ button in the panel (or `c`) opens them. They are saved in the widget's 
 | `barTemp` | `false` | CPU temperature in the bar |
 | `barNetwork` | `false` | Download and upload rates in the bar |
 | `notify` | `true` | Desktop notifications for outages and new alerts |
-| `panelExpanded` | `false` | Open the panel expanded |
+| `panelExpanded` | `false` | Open the panel with its details showing |
 
 With every `bar*` stat off the widget polls every 30 seconds while the panel is closed, enough to colour the icon and notify.
 
