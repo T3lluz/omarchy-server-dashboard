@@ -382,7 +382,7 @@ function containerRunning(container) {
   return !!container && (container.state === "running" || container.state === "restarting")
 }
 
-// A container's state as the panel's status line says it: "Up 7 days,
+// A container's state as its row says it: "Up 7 days,
 // healthy", "Stopped 2 hours ago", "Exited with code 137, 2 hours ago".
 function containerStatus(container) {
   if (!container) return ""
@@ -429,7 +429,7 @@ function speed(value) {
   return amount === "--" ? amount : amount + "/s"
 }
 
-// "23 days 3 hours": the uptime written out, for the panel's status line.
+// "23 days 3 hours": the uptime written out, for the panel's prompt line.
 function uptimeLong(seconds) {
   if (!(seconds > 0)) return ""
   var d = Math.floor(seconds / 86400)
@@ -442,9 +442,10 @@ function uptimeLong(seconds) {
   return "under a minute"
 }
 
-// The status line under the panel's title, one entry per state or fact. The
-// panel rotates through them, the way Omarchy's own panels rotate theirs.
-// `state` has configured, online, snapshot, status, errorKind and busyAction.
+// The prompt line under the panel's title, one entry per state or fact. The
+// panel types them out in turn, the way the other plugins' prompts do; a
+// problem is the only line, so it holds still. `state` has configured,
+// online, snapshot, status, errorKind and busyAction.
 function heroLines(state) {
   if (!state.configured) return ["Connect a server over SSH"]
   if (/^reboot:/.test(state.busyAction)) return ["Rebooting"]
@@ -454,7 +455,7 @@ function heroLines(state) {
     var count = problemCount(snap)
     if (count === 1 && snap.rebootRequired) return ["Reboot required"]
     if (count > 0) return [count + (count === 1 ? " alert" : " alerts")]
-    if (parts(snap).some(function(part) { return part.hot })) return ["Running hot"]
+    if (runningHot(snap)) return ["Running hot"]
     var lines = ["All clear"]
     if (snap.uptimeSeconds > 0) lines.push("Up " + uptimeLong(snap.uptimeSeconds))
     if (snap.osName) lines.push(snap.osName)
@@ -480,85 +481,721 @@ function temperatureLevel(celsius) {
   return 40 + (clamp(celsius, 70, 85) - 70) / 15 * 60
 }
 
-// One disk as a gauge, named by the end of its path to fit the half-width
-// cell; the tooltip has all of it. Hot at 90%, where the notifications start.
-function diskPart(disk) {
-  return {
-    key: "disk:" + disk.mount, icon: "\u{F02CA}", name: disk.mount === "/" ? "Root disk" : disk.mount.split("/").pop(),
-    value: percentText(disk.percent), level: disk.percent, detail: sizeOf(disk.usedBytes, disk.totalBytes),
-    tip: "Mounted at " + disk.mount, hot: disk.percent >= 90
-  }
-}
-
-// The panel's gauges: processor, its temperature, memory and the root disk.
-// Each has an icon and name, a value, a level from 0 to 100 for the meter, a
-// detail under it, an optional tooltip, and `hot` turning it urgent.
-function parts(snap) {
+// The System room's cells: the processor, memory and the processor's
+// temperature, each a small figure over a meter over a line of state.
+// `value` is the figure, `level` the meter (0..100), `suffix` what follows
+// the figure, `hot` turns the cell to the alert tone and gives it a mark.
+function systemCells(snap) {
   if (!snap) return []
-  var out = [{
-    key: "cpu", icon: "\u{F0EE0}", name: "Processor",
-    value: percentText(snap.cpuPercent), level: snap.cpuPercent,
-    detail: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
-    tip: (snap.cpuModel || "") + (snap.cores > 0 ? (snap.cpuModel ? ", " : "") + snap.cores + " cores" : ""),
+  var cells = [{
+    key: "cpu", label: "CPU", icon: "cpu",
+    value: hasLevel(snap.cpuPercent) ? snap.cpuPercent : null,
+    level: hasLevel(snap.cpuPercent) ? snap.cpuPercent : null, suffix: "%",
+    state: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
     hot: level(snap.cpuPercent, 70, 90) === 2
   }]
-  if (snap.cpuTemp !== null && snap.cpuTemp !== undefined) {
-    var warmth = level(snap.cpuTemp, 70, 85)
-    out.push({ key: "temp", icon: warmth === 0 ? "\u{F050F}" : "\u{F10C2}", name: "Temperature",
-               value: Math.round(snap.cpuTemp) + " °C", level: temperatureLevel(snap.cpuTemp),
-               detail: ["Normal", "Warm", "Hot"][warmth], tip: "", hot: warmth === 2 })
-  }
   if (snap.memory) {
-    out.push({ key: "memory", icon: "\u{F061A}", name: "Memory", value: percentText(snap.memory.percent), level: snap.memory.percent,
-               detail: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes), tip: "", hot: snap.memory.percent >= 92 })
+    cells.push({ key: "memory", label: "Memory", icon: "memory-stick", value: snap.memory.percent, level: snap.memory.percent,
+                 suffix: "%", state: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes), hot: snap.memory.percent >= 92 })
   }
-  if (snap.disks && snap.disks.length > 0) out.push(diskPart(snap.disks[0]))
-  return out
+  if (hasLevel(snap.cpuTemp)) {
+    var warmth = level(snap.cpuTemp, 70, 85)
+    cells.push({ key: "temp", label: "Temp", icon: "thermometer", value: snap.cpuTemp, level: temperatureLevel(snap.cpuTemp),
+                 suffix: "°C", state: ["Normal", "Warm", "Hot"][warmth], hot: warmth === 2 })
+  }
+  return cells
 }
 
-// The filesystems after the root one, as gauges for the details.
-function otherDisks(snap) {
-  return snap && snap.disks ? snap.disks.slice(1).map(diskPart) : []
+// The System room's state line: how long it has been up, how busy.
+function systemStatus(snap) {
+  if (!snap) return ""
+  var bits = []
+  if (snap.uptimeSeconds > 0) bits.push("Up " + uptime(snap.uptimeSeconds))
+  if (snap.load && snap.load.total) bits.push(snap.load.total + " tasks")
+  return bits.join(" · ")
 }
 
-// The label and value pairs under the gauges: the network, then what the
-// server is running. Two dashes stand in until there is a rate.
-function serverFacts(snap) {
+// A rate as the Network tile shows it, in the pixel type: a number with one
+// decimal under 10 and its unit ("5.5K/s"). `number` and `decimals` stay
+// apart so it can count up without changing unit. Null before the second
+// poll has a rate.
+function rateParts(bytesPerSecond) {
+  if (!hasLevel(bytesPerSecond)) return null
+  var units = ["B", "K", "M", "G", "T"]
+  var v = Math.max(0, bytesPerSecond)
+  var i = 0
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  var decimals = i > 0 && v < 10 ? 1 : 0
+  // 9.96 K would round to "10.0"; show it as "10" in the same unit.
+  if (decimals === 1 && Math.round(v * 10) / 10 >= 10) decimals = 0
+  return { number: v, decimals: decimals, unit: units[i] + "/s" }
+}
+
+function rateText(parts, k) {
+  if (!parts) return "--"
+  var n = parts.number * (k === undefined ? 1 : Math.max(0, Math.min(1, k)))
+  return n.toFixed(parts.decimals)
+}
+
+// The Network tile's two rates, download over upload.
+function networkRates(snap) {
   if (!snap) return []
-  var facts = [
-    { label: "Download", value: speed(snap.rxRate) },
-    { label: "Upload", value: speed(snap.txRate) }
+  return [
+    { key: "rx", label: "Download", icon: "arrow-down", parts: rateParts(snap.rxRate) },
+    { key: "tx", label: "Upload", icon: "arrow-up", parts: rateParts(snap.txRate) }
   ]
-  if (snap.uptimeSeconds > 0) facts.push({ label: "Uptime", value: uptime(snap.uptimeSeconds) })
-  var containers = snap.containers || []
-  if (containers.length > 0) facts.push({ label: "Containers", value: containers.filter(containerRunning).length + " of " + containers.length })
-  if (snap.load && snap.load.total) facts.push({ label: "Tasks", value: String(snap.load.total) })
-  if (snap.memory && snap.memory.swapTotalBytes > 0) facts.push({ label: "Swap", value: sizeOf(snap.memory.swapUsedBytes, snap.memory.swapTotalBytes) })
+}
+
+// The interfaces the rates count.
+function networkStatus(snap) {
+  if (!snap || !snap.net || !snap.net.ifaces) return ""
+  return snap.net.ifaces.join(" · ")
+}
+
+// The open Network tile: what has gone each way since the server booted,
+// and the interfaces it counts.
+function networkFacts(snap) {
+  if (!snap || !snap.net) return []
+  var facts = [{ label: "Received", value: size(snap.net.rx) }, { label: "Sent", value: size(snap.net.tx) }]
+  if (snap.net.ifaces && snap.net.ifaces.length) facts.push({ label: "Interfaces", value: networkStatus(snap) })
   return facts
 }
 
-// What the machine is, for the details.
+// The short readings the open System room adds, two to a line.
+function machineFacts(snap) {
+  if (!snap) return []
+  var facts = []
+  if (snap.uptimeSeconds > 0) facts.push({ label: "Uptime", value: uptime(snap.uptimeSeconds) })
+  if (snap.load) facts.push({ label: "Load", value: snap.load.one.toFixed(2) + " " + snap.load.five.toFixed(2) + " " + snap.load.fifteen.toFixed(2) })
+  if (snap.load && snap.load.total) facts.push({ label: "Tasks", value: String(snap.load.total) })
+  if (snap.memory && snap.memory.swapTotalBytes > 0) facts.push({ label: "Swap", value: sizeOf(snap.memory.swapUsedBytes, snap.memory.swapTotalBytes) })
+  if (snap.cores > 0) facts.push({ label: "Cores", value: String(snap.cores) })
+  if (snap.arch) facts.push({ label: "Arch", value: snap.arch })
+  return facts
+}
+
+// What the machine is, one to a line, since names run long.
 function systemFacts(snap) {
   if (!snap) return []
   var facts = []
   if (snap.cpuModel) facts.push({ label: "Processor", value: snap.cpuModel })
-  if (snap.cores > 0) facts.push({ label: "Cores", value: String(snap.cores) })
   if (snap.osName) facts.push({ label: "System", value: snap.osName })
   if (snap.kernel) facts.push({ label: "Kernel", value: snap.kernel })
-  if (snap.arch) facts.push({ label: "Architecture", value: snap.arch })
   return facts
 }
 
-// What the details row opens, named in the order they appear under it.
-function detailsLabel(snap) {
+// Each filesystem as the Disk tile and its drawer show it, the root one first: a name by
+// the end of its path, how full it is, and hot at 90%, where the
+// notifications start.
+var DISK_ALERT = 90
+
+function disks(snap) {
+  if (!snap || !snap.disks) return []
+  return snap.disks.map(function(disk) {
+    var name = disk.mount === "/" ? "Root" : (disk.mount.split("/").filter(function(p) { return p !== "" }).pop() || disk.mount)
+    return {
+      key: "disk:" + disk.mount, mount: disk.mount, device: disk.device, name: name,
+      level: disk.percent, used: size(disk.usedBytes), free: size(disk.availableBytes), total: size(disk.totalBytes),
+      detail: sizeOf(disk.usedBytes, disk.totalBytes), hot: disk.percent >= DISK_ALERT
+    }
+  })
+}
+
+// The open Disks room: where each one lives.
+function diskFacts(snap) {
+  return disks(snap).map(function(d) { return { label: d.mount, value: d.device } })
+}
+
+// Unhealthy or restarting over and over: the containers the room keeps in
+// view and the alerts name. A stopped one is left alone; stopping one is
+// usually on purpose.
+function containerTrouble(container) {
+  return !!container && (/unhealthy/i.test(container.status + " " + container.state) || container.state === "restarting")
+}
+
+function containerCounts(list) {
+  var out = { total: 0, running: 0, stopped: 0, trouble: 0, checked: 0, healthy: 0 }
+  ;(list || []).forEach(function(c) {
+    out.total++
+    if (containerRunning(c)) out.running++
+    else out.stopped++
+    if (containerTrouble(c)) out.trouble++
+    if (/\((healthy|unhealthy|health: starting)\)/.test(c.status || "")) {
+      out.checked++
+      if (/\(healthy\)/.test(c.status)) out.healthy++
+    }
+  })
+  return out
+}
+
+// What the Containers tile says beside its count, a line each: they run,
+// and then what most needs saying (trouble, stopped ones, health checks).
+function containerNote(list) {
+  var n = containerCounts(list)
+  if (n.total === 0) return []
+  var lines = ["running"]
+  if (n.trouble > 0) lines.push(n.trouble + " unhealthy")
+  else if (n.stopped > 0) lines.push(n.stopped + " stopped")
+  else if (n.checked > 0) lines.push(n.healthy + " healthy")
+  return lines
+}
+
+function containerFacts(list) {
+  var n = containerCounts(list)
+  if (n.total === 0) return []
+  var facts = [{ label: "Running", value: n.running + " of " + n.total }]
+  if (n.checked > 0) facts.push({ label: "Healthy", value: n.healthy + " of " + n.checked })
+  return facts
+}
+
+// A container row's icon: playing, stopped, or the alert.
+function containerPixel(container) {
+  if (containerTrouble(container)) return "warning-diamond"
+  return containerRunning(container) ? "play" : "stop"
+}
+
+// The Processes room's state line: the busiest one.
+function processesStatus(snap) {
+  var list = snap && snap.processes ? snap.processes : []
+  if (list.length === 0) return ""
+  return list[0].name + " at " + list[0].cpu.toFixed(1) + "%"
+}
+
+// A gauge past its limit, for the prompt: the cells, or a full disk.
+function runningHot(snap) {
+  return systemCells(snap).some(function(c) { return c.hot }) || disks(snap).some(function(d) { return d.hot })
+}
+
+// ------------------------------------------------------------------ rooms
+
+// Shared with Batteries and Sonus, the Rooms look: room tones, the block face
+// and the pixel type, the cells of a meter, the prompt that types itself, the
+// icon stories and the decode. Icons are names in Pixels.js (pixel art); the
+// panel kit is handed Nerd Font glyphs, which Glyph.qml swaps for their pixel
+// icons through PIXEL_GLYPHS.
+
+function hasLevel(value) {
+  return value !== null && value !== undefined && isFinite(value)
+}
+
+// Each room's tone, by what it holds, so the plugins agree: the machine is
+// blue, storage and connections cyan (side by side, as Sonus's output and
+// input share blue), running things green. Processes and the title room
+// take none (the text colour); failures take the alert tone in the panel.
+var ROOM_TONES = {
+  system: "blue",
+  disks: "cyan",
+  network: "cyan",
+  containers: "green",
+  processes: "",
+  failed: "",
+  title: ""
+}
+
+function roomTone(key) {
+  return ROOM_TONES[key] || ""
+}
+
+// Every room's icon, and what it acts out when it comes in or is clicked.
+var ROOM_PIXELS = {
+  system: "speed-fast",
+  disks: "database",
+  network: "sort-vertical",
+  containers: "package",
+  processes: "list-box",
+  failed: "warning-diamond",
+  ssh: "terminal",
+  btop: "chart-line",
+  reboot: "reload",
+  poweroff: "power"
+}
+
+var STORIES = {
+  system: "pulse",
+  disks: "press",
+  network: "buzz",
+  containers: "hop",
+  processes: "wiggle",
+  failed: "shake",
+  ssh: "press",
+  btop: "pulse",
+  reboot: "pop",
+  poweroff: "press"
+}
+
+function roomPixel(key) {
+  return ROOM_PIXELS[key] || "server"
+}
+
+function storyOf(key) {
+  return STORIES[key] || "pop"
+}
+
+// The Nerd Font glyphs the panel kit is handed, as escapes because a Nerd
+// Font character is invisible in most editors. Material Design Icons.
+var GLYPHS = {
+  alert: "\u{F0026}",
+  key: "\u{F030B}",
+  busy: "\u{F0450}",
+  done: "\u{F012C}",
+  update: "\u{F06B0}",
+  clock: "\u{F051F}",
+  bar: "\u{F1513}",
+  bell: "\u{F009A}",
+  link: "\u{F0318}",
+  cpu: "\u{F0EE0}",
+  memory: "\u{F061A}",
+  disk: "\u{F02CA}",
+  temp: "\u{F050F}",
+  network: "\u{F01DA}"
+}
+
+// Each glyph's pixel icon. Glyph.qml draws the pixel icon for any glyph
+// listed here, so the kit's icons match the rooms'.
+var PIXEL_GLYPHS = {}
+;(function() {
+  var byName = {
+    alert: "warning-diamond", key: "key", busy: "reload", done: "check", update: "download",
+    clock: "hourglass", bar: "layout", bell: "bell", link: "link", cpu: "cpu", memory: "memory-stick",
+    disk: "database", temp: "thermometer", network: "arrow-down"
+  }
+  for (var k in byName) PIXEL_GLYPHS[GLYPHS[k]] = byName[k]
+  // The updater's own: updating and done.
+  PIXEL_GLYPHS["\u{F06B0}"] = "download"
+  PIXEL_GLYPHS["\u{F012C}"] = "check"
+})()
+
+function pixelFor(glyph) {
+  return PIXEL_GLYPHS[glyph] || ""
+}
+
+// Every pixel icon the QML and this file name, for the test that checks they
+// all exist in Pixels.js.
+var UI_PIXELS = ["chevron-down", "settings-cog", "arrow-left", "reload", "check", "play", "stop",
+  "warning-diamond", "cpu", "memory-stick", "thermometer", "database", "arrow-down", "arrow-up",
+  "speed-fast", "package", "list-box", "terminal", "chart-line", "power", "sort-vertical"]
+
+// ------------------------------------------------------------ the mark
+
+// The Server Dashboard mark, after its app icon: two server units, each with
+// a light and a label line. Drawn on the icons' 12-cell grid in their weight
+// (one-cell outlines, corners cut), the 24-unit grid being the same drawing
+// doubled. `part` is "frame" (the outlines), "lines" (the labels), "on" (the
+// lights that are lit) or "off" (the ones that are not), so each can take
+// its own colour. `lights` is [top, bottom], true for lit.
+var MARK_UNIT = [
+  "..########..",
+  ".#........#.",
+  ".#.##.###.#.",
+  ".#........#.",
+  "..########.."
+]
+
+function markGrid(part, lights) {
+  var g = []
+  for (var r = 0; r < 12; r++) { g.push([]); for (var c = 0; c < 12; c++) g[r].push(false) }
+  var tops = [0, 6]
+  for (var u = 0; u < 2; u++) {
+    var lit = !lights || lights[u] !== false
+    for (var row = 0; row < MARK_UNIT.length; row++) {
+      for (var col = 0; col < 12; col++) {
+        if (MARK_UNIT[row].charAt(col) !== "#") continue
+        var light = row === 2 && (col === 3 || col === 4)
+        var line = row === 2 && col >= 6 && col <= 8
+        var want = light ? (lit ? "on" : "off") : line ? "lines" : "frame"
+        if (want === part) g[tops[u] + row][col] = true
+      }
+    }
+  }
+  return g
+}
+
+// Runs along each row, merged down where the next rows repeat them, as
+// [x, y, w, h]: the shape Pixels.js keeps its icons in.
+function gridRects(grid) {
+  var runs = []
+  for (var r = 0; r < grid.length; r++) {
+    var c = 0
+    while (c < grid[r].length) {
+      if (!grid[r][c]) { c++; continue }
+      var s = c
+      while (c < grid[r].length && grid[r][c]) c++
+      runs.push([s, r, c - s, 1])
+    }
+  }
+  var merged = []
+  runs.forEach(function(run) {
+    for (var m = 0; m < merged.length; m++) {
+      var x = merged[m]
+      if (x[0] === run[0] && x[2] === run[2] && x[1] + x[3] === run[1]) { x[3]++; return }
+    }
+    merged.push(run.slice())
+  })
+  return merged
+}
+
+// The mark as a pixel icon's art: { g12, g24 }.
+function serverMark(part, lights) {
+  var g12 = gridRects(markGrid(part, lights))
+  return { g12: g12, g24: g12.map(function(q) { return [q[0] * 2, q[1] * 2, q[2] * 2, q[3] * 2] }) }
+}
+
+// Which lights are lit `k` of the way (0..1) through the mark's story: dark,
+// then the top unit, then the bottom one, as a machine coming up.
+function markLights(k) {
+  if (!(k < 1)) return [true, true]
+  return [k >= 0.3, k >= 0.6]
+}
+
+// While the server connects or reboots, the lights take turns, a beat each.
+function workingLights(beat) {
+  return beat % 2 === 0 ? [true, false] : [false, true]
+}
+
+// ------------------------------------------------------------ room tones
+
+// The named colours in a theme's colors.toml: { red: "#565d60", ... }.
+function parsePalette(text) {
+  var out = {}
+  String(text || "").split("\n").forEach(function(line) {
+    var m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*["']?(#[0-9A-Fa-f]{6})/)
+    if (m) out[m[1]] = m[2]
+  })
+  return out
+}
+
+// Contrast between two colours ({r, g, b}, 0 to 1), by the WCAG formula.
+function contrast(a, b) {
+  function lum(c) {
+    function ch(v) { return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4) }
+    return 0.2126 * ch(c.r) + 0.7152 * ch(c.g) + 0.0722 * ch(c.b)
+  }
+  var la = lum(a), lb = lum(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+// Each tone's own hue, DailyDash's, for themes whose palette is all greys.
+var TONE_HUES = {
+  blue: "#5ab4f5",
+  magenta: "#c38af0",
+  cyan: "#4fc9d9",
+  green: "#5cc98a",
+  yellow: "#f1b467"
+}
+
+function hexRgb(hex) {
+  var m = String(hex || "").match(/^#?([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i)
+  return m ? { r: parseInt(m[1], 16) / 255, g: parseInt(m[2], 16) / 255, b: parseInt(m[3], 16) / 255 } : null
+}
+
+function rgbHex(c) {
+  function h(v) { var s = Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16); return s.length < 2 ? "0" + s : s }
+  return "#" + h(c.r) + h(c.g) + h(c.b)
+}
+
+// HSL saturation, 0 to 1.
+function saturation(c) {
+  var max = Math.max(c.r, c.g, c.b), min = Math.min(c.r, c.g, c.b)
+  var l = (max + min) / 2
+  if (max === min) return 0
+  return (max - min) / (1 - Math.abs(2 * l - 1))
+}
+
+// A room's tone: the theme's colour of that name when it is a colour, else
+// the tone's own hue, either way softened toward the theme's text colour so
+// it sits quietly in the theme. No name is the text colour itself.
+function roomToneHex(name, palette, foreground) {
+  var fg = hexRgb(foreground) || { r: 0.8, g: 0.8, b: 0.8 }
+  if (!name) return rgbHex(fg)
+  var own = hexRgb(palette ? palette[name] : null)
+  var base = own && saturation(own) >= 0.3 ? own : hexRgb(TONE_HUES[name] || TONE_HUES.green)
+  var k = 0.3
+  return rgbHex({ r: base.r + (fg.r - base.r) * k, g: base.g + (fg.g - base.g) * k, b: base.b + (fg.b - base.b) * k })
+}
+
+// ------------------------------------------------------------ block face
+
+// Figures in a three-row block face, as seven segments: the top and the
+// middle bar ride the upper half of their row, so the digit sits two and a
+// half rows tall. Returns the three rows; anything unknown is a dash.
+var SEGMENTS = {
+  "0": "abcdef", "1": "bc", "2": "abged", "3": "abgcd", "4": "fbgc",
+  "5": "afgcd", "6": "afgecd", "7": "abc", "8": "abcdefg", "9": "abcdfg", "-": "g"
+}
+
+// A one on the right-hand segments alone reads as a stray bar beside its
+// neighbour, so it stands in the middle on a foot. A decimal point is one
+// column, a half block on the baseline.
+var BIG_ONE = ["▀█ ", " █ ", "▀▀▀"]
+var BIG_POINT = [" ", " ", "▀"]
+
+function bigDigits(text) {
+  var rows = ["", "", ""]
+  String(text).split("").forEach(function(ch, i) {
+    var gap = i > 0 ? " " : ""
+    if (ch === "1" || ch === ".") {
+      var glyph = ch === "1" ? BIG_ONE : BIG_POINT
+      for (var r = 0; r < 3; r++) rows[r] += gap + glyph[r]
+      return
+    }
+    var s = SEGMENTS[ch] === undefined ? SEGMENTS["-"] : SEGMENTS[ch]
+    function on(seg) { return s.indexOf(seg) !== -1 }
+    rows[0] += gap + (on("f") ? "█" : on("a") ? "▀" : " ") + (on("a") ? "▀" : " ") + (on("b") ? "█" : on("a") ? "▀" : " ")
+    rows[1] += gap + (on("e") ? "█" : on("g") ? "▀" : " ") + (on("g") ? "▀" : " ") + (on("c") ? "█" : on("g") ? "▀" : " ")
+    // Without a bottom bar (4, 7) the sides still reach the baseline.
+    rows[2] += gap + (on("d") ? "▀▀▀" : (on("e") ? "▀" : " ") + " " + (on("c") ? "▀" : " "))
+  })
+  return rows
+}
+
+// ------------------------------------------------------------- pixel type
+
+// Small figures in the block face, as pixels: each digit is the face's
+// columns by five half rows (bigDigits) with its middle column doubled, four
+// wide, so the inside of a 0 or an 8 is two pixels and reads at bar size. The
+// one keeps a single stem. The %, the degree, the size letters the bar's
+// rates need ("5.4K") and the Network room's "/s" are drawn to match. Rows top to bottom, "#" on.
+var PIXEL_FONT = {
+  "1": [".##.", "..#.", "..#.", "..#.", ".###"],
+  "%": ["##..#", "##.#.", "..#..", ".#.##", "#..##"],
+  " ": ["..", "..", "..", "..", ".."],
+  ".": [".", ".", ".", ".", "#"],
+  "°": ["###", "#.#", "###", "...", "..."],
+  "C": ["####", "#...", "#...", "#...", "####"],
+  "B": ["###.", "#..#", "####", "#..#", "###."],
+  "K": ["#..#", "#.#.", "##..", "#.#.", "#..#"],
+  "M": ["#...#", "##.##", "#.#.#", "#...#", "#...#"],
+  "G": ["####", "#...", "#.##", "#..#", "####"],
+  "T": ["###", ".#.", ".#.", ".#.", ".#."],
+  "/": ["..#", "..#", ".#.", "#..", "#.."],
+  "s": ["...", ".##", "#..", ".##", "##."]
+}
+;(function() {
+  "023456789-".split("").forEach(function(ch) {
+    var rows = bigDigits(ch)
+    var half = []
+    rows.forEach(function(row) {
+      var top = "", bottom = ""
+      for (var i = 0; i < row.length; i++) {
+        var c = row.charAt(i)
+        var t = c === "█" || c === "▀" ? "#" : "."
+        var u = c === "█" || c === "▄" ? "#" : "."
+        // The middle column twice.
+        top += i === 1 ? t + t : t
+        bottom += i === 1 ? u + u : u
+      }
+      half.push(top, bottom)
+    })
+    PIXEL_FONT[ch] = half.slice(0, 5)
+  })
+})()
+
+// A line in the pixel type: { width, height, rects }, in cells, rects as
+// [x, y, w, h] merged along each row. A cell between letters; anything the
+// type lacks is skipped.
+function pixelText(text) {
+  var rects = [], x = 0
+  String(text || "").split("").forEach(function(ch) {
+    var glyph = PIXEL_FONT[ch]
+    if (!glyph) return
+    if (x > 0) x += 1
+    for (var r = 0; r < glyph.length; r++) {
+      var row = glyph[r], c = 0
+      while (c < row.length) {
+        if (row.charAt(c) !== "#") { c++; continue }
+        var start = c
+        while (c < row.length && row.charAt(c) === "#") c++
+        rects.push([x + start, r, c - start, 1])
+      }
+    }
+    x += glyph[0].length
+  })
+  return { width: x, height: 5, rects: rects }
+}
+
+// Whether the pixel type can draw all of `text`.
+function drawable(text) {
+  return String(text).split("").every(function(ch) { return PIXEL_FONT[ch] !== undefined })
+}
+
+// --------------------------------------------------------------- meters
+
+// A level drawn as a meter of cells, the way Batteries draws a battery: ten
+// cells for a tenth each, so it can be counted at a glance. For each cell,
+// how full it is (0..1), how lit (`glow`, 0..1: a ripple passing) and how
+// far the pointer presses it (`press`, 0..1).
+//
+// opts: segments, level (0..100, fractional while it fills in), dent (0..1
+// across the body, where the pointer is) and ripples ([{ x, age }], x 0..1
+// across, age in ms).
+var METER = {
+  RIPPLE_MS: 760,      // Weave's ripple
+  RIPPLE_CELLS: 14,    // how far it travels, in cells
+  DENT_CELLS: 1.6      // how wide the pointer presses, in cells
+}
+
+function meterCells(opts) {
+  var n = Math.max(1, Math.floor(opts.segments || 10))
+  var lvl = hasLevel(opts.level) ? Math.max(0, Math.min(100, opts.level)) : 0
+  var full = lvl / 100 * n
+  var ripples = opts.ripples || []
+  var out = []
+  for (var i = 0; i < n; i++) {
+    var fill = Math.max(0, Math.min(1, full - i))
+    var glow = 0
+    for (var j = 0; j < ripples.length; j++) {
+      var k = ripples[j].age / METER.RIPPLE_MS
+      if (k < 0 || k >= 1) continue
+      var d = Math.abs(i + 0.5 - ripples[j].x * n)
+      var ring = 1 - Math.abs(d - k * METER.RIPPLE_CELLS) / 1.1
+      if (ring > 0) glow = Math.max(glow, ring * (1 - k))
+    }
+    var press = 0
+    if (opts.dent !== null && opts.dent !== undefined)
+      press = Math.max(0, 1 - Math.abs(i + 0.5 - opts.dent * n) / METER.DENT_CELLS)
+    out.push({ fill: fill, glow: glow, press: press })
+  }
+  return out
+}
+
+// ---------------------------------------------------------------- prompt
+
+function escapeHtml(text) {
+  return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+}
+
+// The prompt line `typed` characters in, as styled text that always lays out
+// the whole line plus a cursor cell, the part not typed yet drawn clear, so a
+// word never wraps differently while it types. The cursor stands in for the
+// next character, except a space, which it would glue to the next word; once
+// typed, it blinks in the cell kept for it at the end.
+var CURSOR = "▌"
+var CLEAR = "<font color=\"#00000000\">"
+
+function revealLine(line, typed, cursorOn) {
+  line = String(line || "")
+  var n = Math.max(0, Math.min(line.length, Math.floor(typed) || 0))
+  var shown = escapeHtml(line.substring(0, n))
+  var rest
+  if (n < line.length) {
+    var next = line.charAt(n)
+    shown += next === " " ? " " : CURSOR
+    rest = line.substring(n + 1) + CURSOR
+  } else if (cursorOn) {
+    shown += CURSOR
+    rest = ""
+  } else {
+    rest = CURSOR
+  }
+  return rest === "" ? shown : shown + CLEAR + escapeHtml(rest) + "</font>"
+}
+
+// ---------------------------------------------------------------- motion
+
+// The icon's pose `k` of the way through its story (0..1): an offset in
+// whole pixels of the icon's own grid, so pixel art never smears. Each story
+// ends exactly where it began.
+function storyPose(story, k) {
+  var pose = { x: 0, y: 0 }
+  if (!(k > 0 && k < 1)) return pose
+  var arc = Math.sin(Math.PI * k)
+  var fade = 1 - k
+  if (story === "hop") pose.y = -Math.round(arc * 3)
+  else if (story === "wiggle") pose.x = Math.round(Math.sin(k * Math.PI * 3) * 1.6 * fade)
+  else if (story === "press") pose.y = Math.round(arc * 1.2)
+  else if (story === "tilt") pose.x = Math.round(Math.sin(k * Math.PI * 2) * 2 * fade)
+  else if (story === "pulse") pose.y = -Math.round(Math.abs(Math.sin(k * Math.PI * 2)) * 1.4)
+  else if (story === "shake") pose.x = Math.round(Math.sin(k * Math.PI * 4) * 2 * fade)
+  else if (story === "buzz") pose.x = Math.round(Math.sin(k * Math.PI * 10) * 1.6 * fade)
+  else pose.y = -Math.round(arc * 2)
+  // No negative zero: a pose at rest equals { x: 0, y: 0 }.
+  pose.x += 0
+  pose.y += 0
+  return pose
+}
+
+// Text arriving the way a terminal decodes it: the first `progress` of it
+// is real, the rest cycles through glyphs. Spaces and separators stay put so
+// the line keeps its shape. `seed` varies the noise between runs.
+var GLITCH = "#%&*+=<>/\\|~:;?!$@"
+
+function scramble(text, progress, seed) {
+  text = String(text || "")
+  var keep = Math.floor(Math.max(0, Math.min(1, progress)) * text.length)
+  var tick = Math.floor(progress * 14)
+  var out = ""
+  for (var i = 0; i < text.length; i++) {
+    var ch = text.charAt(i)
+    if (i < keep || ch === " " || ch === "·") { out += ch; continue }
+    var h = (((i + 1) * 73856093) ^ (((seed || 0) + 1) * 19349663) ^ ((tick + 1) * 83492791)) >>> 0
+    out += GLITCH.charAt(h % GLITCH.length)
+  }
+  return out
+}
+
+// ------------------------------------------------------------------- bar
+
+// What the bar shows beside the mark, in the order the settings list them:
+// { key, icon, text, hot }, the text in the pixel type. CPU and memory as a
+// share, the root disk too, the temperature in degrees, the network as two
+// sizes a second ("5.4K"), the arrows saying which way.
+function barItems(snap, stats) {
+  if (!snap) return []
+  var out = []
+  ;(stats || []).forEach(function(stat) {
+    if (stat === "cpu") out.push({ key: "cpu", icon: "cpu", text: percentText(snap.cpuPercent), hot: level(snap.cpuPercent, 70, 90) === 2 })
+    else if (stat === "ram" && snap.memory) out.push({ key: "ram", icon: "memory-stick", text: percentText(snap.memory.percent), hot: snap.memory.percent >= 92 })
+    else if (stat === "disk" && snap.disks && snap.disks.length) out.push({ key: "disk", icon: "database", text: percentText(snap.disks[0].percent), hot: snap.disks[0].percent >= DISK_ALERT })
+    else if (stat === "temp" && hasLevel(snap.cpuTemp)) out.push({ key: "temp", icon: "thermometer", text: Math.round(snap.cpuTemp) + "°", hot: level(snap.cpuTemp, 70, 85) === 2 })
+    else if (stat === "net") {
+      out.push({ key: "rx", icon: "arrow-down", text: hasLevel(snap.rxRate) ? bytes(snap.rxRate) : "--", hot: false })
+      out.push({ key: "tx", icon: "arrow-up", text: hasLevel(snap.txRate) ? bytes(snap.txRate) : "--", hot: false })
+    }
+  })
+  return out
+}
+
+// The mark in the bar: the server, or the alert when something is wrong;
+// dim while it waits for the user; its lights taking turns while it works.
+// state: { configured, online, status, needsUser, alertCount, working }.
+function barMark(state) {
+  if (!state.configured) return { icon: "server", tone: "dim", working: false }
+  if (state.working) return { icon: "server", tone: "", working: true }
+  if (state.status === "error" && state.needsUser) return { icon: "server", tone: "dim", working: false }
+  if (state.status === "error") return { icon: "warning-diamond", tone: "low", working: false }
+  if (state.online && state.alertCount > 0) return { icon: "warning-diamond", tone: "low", working: false }
+  return { icon: "server", tone: state.online ? "" : "dim", working: false }
+}
+
+// The card that opens when the pointer rests on the bar item: a line per
+// reading, as the rooms have them. { key, name, icon, tone (a room tone
+// name, or "low"), level (0..100 or null for no meter), text, mark }.
+function hoverRows(snap) {
+  if (!snap) return []
+  var rows = systemCells(snap).map(function(c) {
+    return { key: c.key, name: c.label, icon: c.icon, tone: c.hot ? "low" : roomTone("system"), level: c.level,
+             text: c.key === "temp" ? Math.round(c.value) + "°" : percentText(c.value), mark: c.hot ? "warning-diamond" : "" }
+  })
+  disks(snap).slice(0, 3).forEach(function(d) {
+    rows.push({ key: d.key, name: d.mount === "/" ? "Root disk" : d.name, icon: "database", tone: d.hot ? "low" : roomTone("disks"),
+                level: d.level, text: percentText(d.level), mark: d.hot ? "warning-diamond" : "" })
+  })
+  var n = containerCounts(snap.containers)
+  if (n.total > 0) {
+    rows.push({ key: "containers", name: "Containers", icon: "package", tone: n.trouble > 0 ? "low" : roomTone("containers"),
+                level: n.running / n.total * 100, text: String(n.running), mark: n.trouble > 0 ? "warning-diamond" : "" })
+  }
+  return rows
+}
+
+// The line under the card's rows: the problem when there is one, how many
+// when there are more, else how long the server has been up.
+function hoverNote(snap) {
   if (!snap) return ""
-  var names = []
-  if (otherDisks(snap).length > 0) names.push("disks")
-  if ((snap.processes || []).length > 0) names.push("processes")
-  if (systemFacts(snap).length > 0) names.push("system")
-  if ((snap.containers || []).length > 0) names.push("containers")
-  var label = names.join(", ")
-  return label.charAt(0).toUpperCase() + label.slice(1)
+  var lines = alertLines(snap).concat((snap.failedUnits || []).map(function(u) { return u.name + " failed" }))
+  if (lines.length === 1) return lines[0]
+  if (lines.length > 1) return lines.length + " alerts, open the panel to see"
+  return snap.uptimeSeconds > 0 ? "Up " + uptimeLong(snap.uptimeSeconds) : ""
 }
 
 // ---------------------------------------------------------------- alerts
@@ -600,10 +1237,10 @@ function problemCount(snapshot) {
   return snapshot ? alertLines(snapshot).length + (snapshot.failedUnits || []).length : 0
 }
 
-// Whether the status line should stand out: something is listed as wrong, or
-// a gauge runs hot.
+// Whether the prompt should stand out: something is listed as wrong, or a
+// gauge runs hot.
 function needsAttention(snapshot) {
-  return problemCount(snapshot) > 0 || parts(snapshot).some(function(part) { return part.hot })
+  return problemCount(snapshot) > 0 || runningHot(snapshot)
 }
 
 // The alerts in `current` that were not in `previous`, as messages.

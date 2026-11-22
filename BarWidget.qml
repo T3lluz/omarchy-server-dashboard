@@ -1,14 +1,17 @@
 import QtQuick
+import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Bar entry: a server mark with the stats picked in settings, and the host
-// for the dashboard panel. The bar draws this widget once per monitor; the
-// first instance owns the SSH client and the others read from it, so the
-// server sees one poller and one login.
+// Bar entry: the server mark with the stats picked in settings, each a pixel
+// icon and its figure in the pixel type, in the bar's own colours, and the
+// host for the dashboard panel. Resting the pointer on it opens a card with
+// the readings. The bar draws this widget once per monitor; the first
+// instance owns the SSH client and the others read from it, so the server
+// sees one poller and one login.
 BarWidget {
   id: root
   moduleName: "io.github.t3lluz.server-dashboard"
@@ -37,38 +40,41 @@ BarWidget {
   readonly property bool online: !!client && client.online && !!client.snapshot
   readonly property color barFg: bar ? bar.barForeground : Color.foreground
   readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color iconColor: {
-    if (!client) return Qt.darker(barFg, 1.55)
-    if (client.status === "error" && !client.needsUser) return urgent
-    if (client.online && client.alertCount > 0) return urgent
-    if (client.online) return barFg
-    return Qt.darker(barFg, 1.55)
+  readonly property color dim: Qt.darker(barFg, 1.55)
+  // Everything on whole device pixels, never scaled. Figures in the pixel
+  // type stand as tall as the bar's own digits. Icons take the largest sharp
+  // size that is not bigger than the shell's own (its icon size, with pixel
+  // art's two units clear around the 24): twelve device pixels on a 1.25
+  // scale, twenty-four on a 2.
+  readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+  readonly property int pixelUnit: Math.max(1, Math.round(button.fontSize * 0.72 * dpr / 5))
+  readonly property int iconUnit: Math.max(1, Math.floor(Style.bar.iconSize * 24 / 20 * dpr / 12))
+
+  // The mark: the server, the alert while something is wrong (a mark, not
+  // only a colour), its lights taking turns while it connects or reboots.
+  readonly property var mark: Model.barMark({
+    configured: !!client && client.configured,
+    online: online,
+    status: client ? client.status : "unconfigured",
+    needsUser: !!client && client.needsUser,
+    alertCount: client ? client.alertCount : 0,
+    working: !!client && client.configured && ((client.status === "connecting" && !client.snapshot)
+      || /^(reboot|poweroff):/.test(client.busyAction))
+  })
+  readonly property var items: showsMetrics && online ? Model.barItems(client.snapshot, barStats) : []
+
+  function toneColor(tone) {
+    if (tone === "low") return urgent
+    if (tone === "dim") return dim
+    return barFg
   }
-  readonly property var metricParts: {
-    if (!showsMetrics || !online) return []
-    var s = client.snapshot
-    var parts = []
-    for (var i = 0; i < barStats.length; i++) {
-      var stat = barStats[i]
-      if (stat === "cpu") parts.push("󰓅 " + Model.percent(s.cpuPercent))
-      else if (stat === "ram") parts.push("󰍛 " + Model.percent(s.memory ? s.memory.percent : null))
-      else if (stat === "disk" && s.disks && s.disks.length) parts.push("󰋊 " + Model.percent(s.disks[0].percent))
-      else if (stat === "temp" && s.cpuTemp !== null) parts.push("󰔏 " + Model.temperature(s.cpuTemp))
-      else if (stat === "net") {
-        parts.push("󰇚 " + Model.rate(s.rxRate))
-        parts.push("󰕒 " + Model.rate(s.txRate))
-      }
-    }
-    return parts
-  }
+
+  // The shell's plain tooltip, only while there is no card to show.
   readonly property string tooltip: {
     if (!client || !client.configured) return "Server Dashboard: click to connect a server"
     if (client.status === "error") return displayName + ": " + client.errorText
     if (!online) return displayName + ": connecting…"
-    var s = client.snapshot
-    return displayName + "  CPU " + Model.percent(s.cpuPercent)
-      + "  RAM " + Model.percent(s.memory ? s.memory.percent : null)
-      + "  up " + Model.uptime(s.uptimeSeconds)
+    return ""
   }
 
   function electLeader() {
@@ -210,7 +216,7 @@ BarWidget {
         status: c.status,
         error: c.errorText,
         widgets: root.bar && root.bar.moduleWidgets ? root.bar.moduleWidgets(root.moduleName).length : 1,
-        expanded: panelLoader.item ? panelLoader.item.expanded : null,
+        room: panelLoader.item ? panelLoader.item.openRoom : null,
         cpu: c.snapshot ? c.snapshot.cpuPercent : null,
         memory: c.snapshot && c.snapshot.memory ? c.snapshot.memory.percent : null,
         uptime: c.snapshot ? c.snapshot.uptimeSeconds : null
@@ -218,13 +224,39 @@ BarWidget {
     }
   }
 
+  // The hover card: after the shell's tooltip delay, gone the moment the
+  // pointer leaves or the panel opens.
+  readonly property var hoverRows: online ? Model.hoverRows(client.snapshot) : []
+  readonly property bool cardWanted: button.tooltipHovered && !opened && hoverRows.length > 0
+  property bool cardShown: false
+  onCardWantedChanged: if (!cardWanted) cardShown = false
+
+  Timer {
+    interval: 400
+    running: root.cardWanted && !root.cardShown
+    onTriggered: root.cardShown = true
+  }
+
+  HoverCard {
+    target: button
+    bar: root.bar
+    shown: root.cardShown
+    rows: root.hoverRows
+    note: root.online ? Model.hoverNote(root.client.snapshot) : ""
+    palette: panelLoader.item ? panelLoader.item.palette : ({})
+    unit: root.pixelUnit
+    fontFamily: button.fontFamily
+  }
+
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
     hasVisualContent: true
+    // The hover card above takes the place of the plain tooltip once the
+    // server answers.
     tooltipText: root.tooltip
-    fixedWidth: root.vertical ? -1 : (root.metricParts.length > 0 ? content.implicitWidth + scaledHorizontalMargin * 2 : Style.bar.iconSlot)
+    fixedWidth: root.vertical ? -1 : (root.items.length > 0 ? content.implicitWidth + scaledHorizontalMargin * 2 : Style.bar.iconSlot)
     fixedHeight: root.vertical ? Style.bar.iconSlot : -1
 
     onPressed: function(buttonCode) {
@@ -236,56 +268,53 @@ BarWidget {
     Row {
       id: content
       anchors.centerIn: parent
-      spacing: Style.space(6)
+      spacing: Style.space(5)
 
+      // One slot, as big as the mark, so swapping it for the alert moves
+      // nothing beside it.
       Item {
-        width: Style.bar.iconCanvas
-        height: Style.bar.iconCanvas
         anchors.verticalCenter: parent.verticalCenter
+        width: serverMark.implicitWidth
+        height: serverMark.implicitHeight
 
-        OpticalGlyph {
-          anchors.fill: parent
-          text: "󰒋"
-          fontFamily: button.fontFamily
-          fontSize: Style.bar.iconFont
-          color: root.iconColor
+        ServerMark {
+          id: serverMark
+          visible: root.mark.icon === "server"
+          unit: root.iconUnit
+          working: root.mark.working
+          color: root.toneColor(root.mark.tone)
+          dimColor: root.mark.tone === "dim" ? Qt.darker(root.barFg, 2.2) : root.dim
         }
 
-        // Pulses while the first connection is in flight.
-        Rectangle {
-          id: connectingDot
-          readonly property bool connecting: !!root.client && root.client.configured && root.client.status === "connecting"
-          visible: connecting
-          width: Math.max(4, Style.space(4))
-          height: width
-          radius: width / 2
-          color: root.barFg
-          anchors.right: parent.right
-          anchors.bottom: parent.bottom
-          SequentialAnimation on opacity {
-            running: connectingDot.connecting
-            loops: Animation.Infinite
-            NumberAnimation { from: 1; to: 0.2; duration: 600 }
-            NumberAnimation { from: 0.2; to: 1; duration: 600 }
-          }
+        PixelIcon {
+          visible: root.mark.icon !== "server"
+          name: root.mark.icon
+          unit: root.iconUnit
+          color: root.toneColor(root.mark.tone)
         }
       }
 
-      // One item per stat so the row spacing, not padding characters,
-      // separates them: the same gap as between the icon and the first stat.
       Repeater {
-        id: metrics
-        model: root.metricParts
+        model: root.vertical ? [] : root.items
 
-        Text {
-          required property string modelData
+        Row {
+          required property var modelData
           anchors.verticalCenter: parent.verticalCenter
-          textFormat: Text.PlainText
-          text: modelData
-          color: root.barFg
-          font.family: button.fontFamily
-          font.pixelSize: button.fontSize
-          renderType: Text.NativeRendering
+          spacing: Style.space(3)
+
+          PixelIcon {
+            anchors.verticalCenter: parent.verticalCenter
+            name: modelData.icon
+            unit: root.iconUnit
+            color: modelData.hot ? root.urgent : root.barFg
+          }
+
+          PixelText {
+            anchors.verticalCenter: parent.verticalCenter
+            text: modelData.text
+            unit: root.pixelUnit
+            color: modelData.hot ? root.urgent : root.barFg
+          }
         }
       }
     }

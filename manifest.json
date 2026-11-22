@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.t3lluz.server-dashboard",
   "name": "Server Dashboard",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "fredde",
   "license": "MIT",
   "homepage": "https://github.com/T3lluz/omarchy-server-dashboard",
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Server Dashboard",
-    "description": "Server stats in the bar (pick which, or none), and a dense dashboard with gauges and readings that opens up to disks, processes, the system and containers.",
+    "description": "Server stats in the bar as pixel icons and figures (pick which, or none), a card with the readings on hover, and a panel of rooms: the system, disks, containers and processes, each opening to the rest.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -29,7 +29,6 @@
       "barDisk": false,
       "barTemp": false,
       "barNetwork": false,
-      "panelExpanded": false,
       "notify": true,
       "autoUpdateCheck": true
     },
@@ -95,13 +94,6 @@
         "type": "boolean",
         "label": "Show network rates in the bar",
         "description": "Turn every bar stat off to show only the server icon.",
-        "defaultValue": false
-      },
-      {
-        "key": "panelExpanded",
-        "type": "boolean",
-        "label": "Open with details",
-        "description": "Show disks, processes, the system and containers without opening the details row.",
         "defaultValue": false
       },
       {

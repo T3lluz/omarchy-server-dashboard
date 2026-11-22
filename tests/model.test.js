@@ -4,7 +4,9 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, serverFacts, systemFacts, parts, otherDisks, detailsLabel, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, STORIES, roomTone, roomPixel, storyOf, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, storyPose, scramble, barItems, barMark, hoverRows, hoverNote }")()
+const pixelSource = fs.readFileSync(path.join(__dirname, "..", "Pixels.js"), "utf8").replace(/^\.pragma library\s*/, "")
+const Pixels = new Function(pixelSource + "\nreturn { icons }")()
 
 const sample = (ts, idle, rx) => `@@TS
 ${ts}
@@ -142,48 +144,84 @@ assert.strictEqual(Model.uptimeLong(30), "under a minute")
 // The probe's own ps never counts as a process.
 assert.deepStrictEqual(Model.parseProbe(sample(1, 1000, 0).replace("@@PROC\n", "@@PROC\n   99 100 0.0 4400 ps\n")).processes.filter(p => p.name === "ps"), [])
 
-// Under the gauges: nothing until connected, dashes until the first rate.
-assert.deepStrictEqual(Model.serverFacts(null), [])
+// The Network room: two rates as figures, what has gone each way since boot.
 {
-  const facts = Model.serverFacts(b)
-  assert.deepStrictEqual(facts.map(f => f.label), ["Download", "Upload", "Uptime", "Containers", "Tasks", "Swap"])
-  assert.strictEqual(facts[0].value, "977 KB/s")
-  assert.strictEqual(facts[3].value, "2 of 3")
-  assert.strictEqual(facts[5].value, "0.5 of 1.9 GB")
-  assert.strictEqual(Model.serverFacts(a)[0].value, "--")
-  assert.deepStrictEqual(Model.systemFacts(b).map(f => f.label), ["Processor", "Cores", "System", "Kernel", "Architecture"])
+  const rates = Model.networkRates(b)
+  assert.deepStrictEqual(rates.map(r => r.key), ["rx", "tx"])
+  assert.deepStrictEqual(rates[0].parts, { number: 1000000 / 1024, decimals: 0, unit: "K/s" })
+  assert.strictEqual(Model.rateText(rates[0].parts), "977")
+  assert.strictEqual(Model.networkRates(a)[0].parts, null, "no rate before the second poll")
+  assert.strictEqual(Model.rateText(null), "--")
+  assert.strictEqual(Model.rateText(Model.rateParts(5.5 * 1024)), "5.5")
+  assert.strictEqual(Model.rateText(Model.rateParts(5.5 * 1024), 0.5), "2.8", "counts up in the unit it ends in")
+  assert.strictEqual(Model.rateText(Model.rateParts(9.97 * 1024)), "10", "never 10.0")
+  assert.strictEqual(Model.rateParts(300).unit, "B/s")
+  assert.strictEqual(Model.rateParts(2.5 * 1024 ** 3).unit, "G/s")
+  assert.deepStrictEqual(Model.networkFacts(b), [{ label: "Received", value: "5.7 MB" }, { label: "Sent", value: "4.9 KB" }, { label: "Interfaces", value: "eno1" }])
+  assert.deepStrictEqual(Model.networkFacts(null), [])
+  assert.strictEqual(Model.networkStatus(b), "eno1")
+  for (const v of [0, 300, 5.5 * 1024, 123.4 * 1024 ** 2, 2.5 * 1024 ** 3]) {
+    const parts = Model.rateParts(v)
+    assert.ok(Model.drawable(parts.unit), parts.unit + " can be drawn")
+    assert.ok(/^[0-9.]+$/.test(Model.rateText(parts)), "the block face draws " + Model.rateText(parts))
+  }
+}
+
+// The System room's readings when open.
+{
+  assert.deepStrictEqual(Model.machineFacts(b).map(f => f.label), ["Uptime", "Load", "Tasks", "Swap", "Cores", "Arch"])
+  assert.strictEqual(Model.machineFacts(b)[1].value, "0.52 0.40 0.31")
+  assert.strictEqual(Model.machineFacts(b)[3].value, "0.5 of 1.9 GB")
+  assert.deepStrictEqual(Model.systemFacts(b).map(f => f.label), ["Processor", "System", "Kernel"])
   assert.deepStrictEqual(Model.systemFacts(null), [])
+  assert.strictEqual(Model.systemStatus(b), "Up 3d 4h \u00B7 412 tasks")
 }
 
-// The gauges: processor and its temperature, memory and the root disk, each
-// with a value, a level for its meter and a detail, urgent where it runs hot.
+// The System room's cells: the processor, memory and its temperature, each a
+// figure over a meter over a state line, turning to the alert tone when hot.
 {
-  const rows = Model.parts(c)
-  assert.deepStrictEqual(rows.map(r => r.key), ["cpu", "temp", "memory", "disk:/"])
-  assert.ok(rows.every(r => r.icon.length > 0), "every gauge has an icon")
-  assert.strictEqual(rows[0].name, "Processor")
-  assert.strictEqual(rows[0].value, "93%")
-  assert.strictEqual(rows[0].detail, "Load 0.52")
-  assert.ok(rows[0].tip.startsWith("Intel Core i5-8500T"), "the processor's model is its tooltip")
-  assert.strictEqual(rows[0].hot, true, "93% CPU is hot")
-  assert.strictEqual(rows[1].value, "48 °C")
-  assert.strictEqual(rows[1].detail, "Normal")
-  assert.strictEqual(rows[2].value, "75%")
-  assert.strictEqual(rows[2].detail, "11.4 of 15.3 GB")
-  assert.strictEqual(rows[3].name, "Root disk")
-  assert.strictEqual(rows[3].value, "42%")
-  assert.deepStrictEqual(Model.otherDisks(c).map(r => r.name), ["DATA"])
-  assert.deepStrictEqual(Model.otherDisks(null), [])
-  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }))[1].detail, "Hot")
-  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: 90 }))[1].hot, true)
-  assert.strictEqual(Model.parts(Object.assign({}, c, { cpuTemp: null })).length, 3)
-  assert.strictEqual(Model.parts(a)[0].value, "--", "no CPU share before the second poll")
-  assert.deepStrictEqual(Model.parts(null), [])
-  assert.strictEqual(Model.detailsLabel(c), "Disks, processes, system, containers")
-  assert.strictEqual(Model.detailsLabel(Object.assign({}, c, { containers: [] })), "Disks, processes, system")
+  const cells = Model.systemCells(c)
+  assert.deepStrictEqual(cells.map(r => r.key), ["cpu", "memory", "temp"])
+  assert.strictEqual(Math.round(cells[0].value), 93)
+  assert.strictEqual(cells[0].state, "Load 0.52")
+  assert.strictEqual(cells[0].hot, true, "93% CPU is hot")
+  assert.strictEqual(cells[1].state, "11.4 of 15.3 GB")
+  assert.strictEqual(cells[1].suffix, "%")
+  assert.strictEqual(cells[2].suffix, "\u00B0C")
+  assert.strictEqual(cells[2].state, "Normal")
+  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90 }))[2].state, "Hot")
+  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90 }))[2].hot, true)
+  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: null })).length, 2)
+  assert.strictEqual(Model.systemCells(a)[0].value, null, "no CPU share before the second poll")
+  assert.deepStrictEqual(Model.systemCells(null), [])
+  for (const cell of cells) assert.ok(cell.suffix === "" || Model.drawable(cell.suffix), cell.suffix + " can be drawn")
+
+  // Disks: the root one first, a name each, hot at 90%.
+  const list = Model.disks(c)
+  assert.deepStrictEqual(list.map(d => d.name), ["Root", "DATA"])
+  assert.strictEqual(list[0].detail, "191 of 477 GB")
+  assert.strictEqual(list[0].hot, false)
+  assert.deepStrictEqual(Model.diskFacts(c).map(f => f.label), ["/", "/DATA"])
+  assert.deepStrictEqual(Model.disks(null), [])
+  assert.strictEqual(Model.disks({ disks: [{ mount: "/mnt/media/", device: "x", percent: 95, usedBytes: 1, availableBytes: 1, totalBytes: 2 }] })[0].name, "media")
+  assert.strictEqual(Model.runningHot(Object.assign({}, c, { cpuPercent: 10, disks: [{ mount: "/", percent: 95, usedBytes: 1, availableBytes: 1, totalBytes: 2 }] })), true)
+
+  // Containers: counts, the state line and the two readings.
+  const n = Model.containerCounts(c.containers)
+  assert.deepStrictEqual(n, { total: 3, running: 2, stopped: 1, trouble: 0, checked: 1, healthy: 1 })
+  assert.deepStrictEqual(Model.containerNote(c.containers), ["running", "1 stopped"])
+  assert.deepStrictEqual(Model.containerFacts(c.containers), [{ label: "Running", value: "2 of 3" }, { label: "Healthy", value: "1 of 1" }])
+  const sick = [{ name: "web", state: "running", status: "Up 2 hours (unhealthy)" }]
+  assert.deepStrictEqual(Model.containerNote(sick), ["running", "1 unhealthy"])
+  assert.deepStrictEqual(Model.containerNote([{ name: "a", state: "running", status: "Up 1 day (healthy)" }]), ["running", "1 healthy"])
+  assert.strictEqual(Model.containerPixel(sick[0]), "warning-diamond")
+  assert.strictEqual(Model.containerPixel(c.containers[2]), "stop", "the stopped one sorts last")
+  assert.deepStrictEqual(Model.containerNote([]), [])
+  assert.strictEqual(Model.processesStatus(c), "dockerd at 12.4%")
+  assert.strictEqual(Model.processesStatus(null), "")
 }
 
-// The status line: what is going on, then facts to rotate through.
+// The prompt line: what is going on, then facts to rotate through.
 {
   const calm = Object.assign({}, c, { rebootRequired: false, failedUnits: [], containers: [], disks: [], cpuPercent: 10, memory: Object.assign({}, c.memory, { percent: 10 }) })
   const state = extra => Object.assign({ configured: true, online: true, snapshot: calm, status: "online", errorKind: "", busyAction: "" }, extra)
@@ -244,6 +282,169 @@ for (const f of process.argv.slice(2)) {
   // Only what is new since the last poll is announced.
   assert.deepStrictEqual(Model.newAlerts(now, now), [])
   assert.deepStrictEqual(Model.newAlerts({ "disk:/": "/ is 93% full" }, { "disk:/": "/ is 94% full", "unit:x": "x failed" }), ["x failed"])
+}
+
+// ------------------------------------------------------------------ rooms
+
+// Every pixel icon the QML and the model name exists in Pixels.js.
+{
+  const used = new Set(Model.UI_PIXELS)
+  for (const k in Model.ROOM_PIXELS) used.add(Model.ROOM_PIXELS[k])
+  for (const k in Model.PIXEL_GLYPHS) used.add(Model.PIXEL_GLYPHS[k])
+  const c = Model.withRates(Model.parseProbe(sample(105, 10050, 2000000)), Model.parseProbe(sample(100, 10000, 1000000)), 1)
+  for (const cell of Model.systemCells(c)) used.add(cell.icon)
+  for (const item of Model.barItems(c, ["cpu", "ram", "disk", "temp", "net"])) used.add(item.icon)
+  for (const row of Model.hoverRows(c)) { used.add(row.icon); if (row.mark) used.add(row.mark) }
+  for (const ct of c.containers) used.add(Model.containerPixel(ct))
+  used.add(Model.barMark({ configured: true, status: "error", needsUser: false }).icon)
+  used.add("server")
+  // The QML names these directly; read them out of the files too.
+  for (const f of fs.readdirSync(path.join(__dirname, "..")).filter(f => f.endsWith(".qml"))) {
+    const text = fs.readFileSync(path.join(__dirname, "..", f), "utf8")
+    for (const m of text.matchAll(/(?:name|icon):\s*"([a-z0-9-]+)"/g)) if (Pixels.icons[m[1]] || /-/.test(m[1])) used.add(m[1])
+  }
+  for (const name of used) assert.ok(Pixels.icons[name], name + " is in Pixels.js")
+  for (const name in Pixels.icons) {
+    const icon = Pixels.icons[name]
+    assert.ok(icon.g24.length > 0 && icon.g12.length > 0, name + " has both grids")
+    for (const r of icon.g12) assert.ok(r[0] >= 0 && r[1] >= 0 && r[0] + r[2] <= 12 && r[1] + r[3] <= 12, name + " stays on the 12 grid")
+  }
+}
+
+// Every glyph the panel hands the kit has a pixel icon.
+{
+  for (const k in Model.GLYPHS) assert.ok(Model.pixelFor(Model.GLYPHS[k]) !== "", k + " maps to a pixel icon")
+  assert.strictEqual(Model.pixelFor("\u{F06B0}"), "download", "the updater's banner glyph")
+  assert.strictEqual(Model.pixelFor("\u{F012C}"), "check")
+  assert.strictEqual(Model.pixelFor("x"), "")
+}
+
+// The mark: its parts together are the "server" icon in Pixels.js, each
+// light one cell high and two wide; lights that are off move to "off".
+{
+  const cells = part => {
+    const out = new Set()
+    for (const [x, y, w, h] of Model.serverMark(part, [true, true]).g12)
+      for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) out.add((x + i) + "," + (y + j))
+    return out
+  }
+  const all = new Set([...cells("frame"), ...cells("lines"), ...cells("on")])
+  const icon = new Set()
+  for (const [x, y, w, h] of Pixels.icons.server.g12) for (let i = 0; i < w; i++) for (let j = 0; j < h; j++) icon.add((x + i) + "," + (y + j))
+  assert.deepStrictEqual([...all].sort(), [...icon].sort(), "the mark's parts make up the server icon")
+  assert.strictEqual(cells("on").size, 4)
+  assert.strictEqual(Model.serverMark("on", [true, false]).g12.length, 1)
+  assert.strictEqual(Model.serverMark("off", [true, false]).g12.length, 1)
+  assert.deepStrictEqual(Model.serverMark("frame").g24[0], Model.serverMark("frame").g12[0].map(v => v * 2))
+  assert.deepStrictEqual(Model.markLights(0), [false, false])
+  assert.deepStrictEqual(Model.markLights(0.45), [true, false])
+  assert.deepStrictEqual(Model.markLights(1), [true, true])
+  assert.deepStrictEqual(Model.workingLights(0), [true, false])
+  assert.deepStrictEqual(Model.workingLights(1), [false, true])
+}
+
+// Tones are valid colours; a grey theme gets the tones' own hues.
+{
+  const greys = { blue: "#7a7a7a", cyan: "#808080", green: "#777777" }
+  const theme = Model.parsePalette('color4 = "#123456"\nblue = "#3b82f6"\ncyan="#06b6d4"\n')
+  assert.strictEqual(theme.blue, "#3b82f6")
+  for (const k in Model.ROOM_TONES) {
+    for (const pal of [theme, greys, {}]) assert.ok(/^#[0-9a-f]{6}$/.test(Model.roomToneHex(Model.roomTone(k), pal, "#cdd6f4")), k + " is a colour")
+  }
+  assert.strictEqual(Model.roomToneHex("", theme, "#cdd6f4"), "#cdd6f4", "no tone is the text colour")
+  assert.notStrictEqual(Model.roomToneHex("blue", greys, "#cdd6f4"), Model.roomToneHex("green", greys, "#cdd6f4"))
+  const white = { r: 1, g: 1, b: 1 }, black = { r: 0, g: 0, b: 0 }
+  assert.ok(Math.abs(Model.contrast(white, black) - 21) < 0.01)
+}
+
+// Stories end where they began.
+for (const k in Model.STORIES) {
+  const story = Model.storyOf(k)
+  assert.deepStrictEqual(Model.storyPose(story, 0), { x: 0, y: 0 })
+  assert.deepStrictEqual(Model.storyPose(story, 1), { x: 0, y: 0 }, story + " ends at rest")
+  for (let k2 = 0; k2 <= 1; k2 += 0.05) {
+    const p = Model.storyPose(story, k2)
+    assert.ok(Number.isInteger(p.x) && Number.isInteger(p.y), story + " moves in whole pixels")
+  }
+}
+
+// The block face, the pixel type and every string the bar writes.
+{
+  assert.deepStrictEqual(Model.bigDigits("1"), ["\u2580\u2588 ", " \u2588 ", "\u2580\u2580\u2580"])
+  assert.deepStrictEqual(Model.bigDigits("5.5").map(r => r.length), [9, 9, 9], "a point is one column")
+  assert.strictEqual(Model.bigDigits("5.5")[2].charAt(4), "\u2580", "on the baseline")
+  assert.strictEqual(Model.bigDigits("42")[0].length, 7)
+  const snaps = [
+    Model.withRates(Model.parseProbe(sample(105, 10050, 2000000)), Model.parseProbe(sample(100, 10000, 1000000)), 1),
+    Model.parseProbe(sample(100, 10000, 1000000)),
+    Object.assign(Model.parseProbe(sample(100, 10000, 1000000)), { cpuPercent: 100, rxRate: 3.2 * 1024 ** 3, txRate: 512, cpuTemp: 104.6 })
+  ]
+  for (const snap of snaps) {
+    for (const item of Model.barItems(snap, ["cpu", "ram", "disk", "temp", "net"])) assert.ok(Model.drawable(item.text), JSON.stringify(item.text) + " can be drawn")
+    for (const row of Model.hoverRows(snap)) assert.ok(Model.drawable(row.text), JSON.stringify(row.text) + " can be drawn")
+  }
+  assert.ok(Model.drawable("100%") && Model.drawable("--") && Model.drawable("41\u00B0C"))
+  for (const unit of ["B", "K", "M", "G", "T"]) assert.ok(Model.drawable("1.5" + unit))
+  assert.strictEqual(Model.pixelText("1").width, 4)
+  assert.strictEqual(Model.pixelText("").width, 0)
+  for (const ch in Model.PIXEL_FONT) {
+    const g = Model.PIXEL_FONT[ch]
+    assert.strictEqual(g.length, 5, ch + " is five rows")
+    assert.ok(g.every(r => r.length === g[0].length), ch + " rows are one width")
+  }
+}
+
+// The bar: what each stat says, the mark's state.
+{
+  const c = Model.withRates(Model.parseProbe(sample(105, 10050, 2000000)), Model.parseProbe(sample(100, 10000, 1000000)), 1)
+  const items = Model.barItems(c, ["cpu", "ram", "temp", "net"])
+  assert.deepStrictEqual(items.map(i => i.key), ["cpu", "ram", "temp", "rx", "tx"])
+  assert.strictEqual(items[0].text, "0%")
+  assert.strictEqual(items[2].text, "48\u00B0")
+  assert.strictEqual(items[3].text, "977K")
+  assert.deepStrictEqual(Model.barItems(null, ["cpu"]), [])
+  assert.strictEqual(Model.barItems(Model.parseProbe(sample(100, 10000, 1000000)), ["cpu"])[0].text, "--")
+  assert.strictEqual(Model.barItems(Object.assign({}, c, { cpuPercent: 95 }), ["cpu"])[0].hot, true)
+  const mark = extra => Model.barMark(Object.assign({ configured: true, online: true, status: "online", needsUser: false, alertCount: 0, working: false }, extra))
+  assert.deepStrictEqual(mark({}), { icon: "server", tone: "", working: false })
+  assert.strictEqual(mark({ alertCount: 2 }).icon, "warning-diamond", "an alert is a mark, not colour alone")
+  assert.strictEqual(mark({ online: false, status: "error" }).tone, "low")
+  assert.strictEqual(mark({ online: false, status: "error", needsUser: true }).tone, "dim")
+  assert.strictEqual(mark({ working: true }).working, true)
+  assert.strictEqual(mark({ configured: false }).tone, "dim")
+}
+
+// The hover card: a line per reading, the alert tone and a mark when hot.
+{
+  const c = Model.withRates(Model.parseProbe(sample(105, 10050, 2000000)), Model.parseProbe(sample(100, 10000, 1000000)), 1)
+  const rows = Model.hoverRows(c)
+  assert.deepStrictEqual(rows.map(r => r.key), ["cpu", "memory", "temp", "disk:/", "disk:/DATA", "containers"])
+  assert.strictEqual(rows[3].name, "Root disk")
+  assert.strictEqual(rows[5].text, "2")
+  const hot = Model.hoverRows(Object.assign({}, c, { cpuPercent: 99 }))[0]
+  assert.strictEqual(hot.tone, "low")
+  assert.strictEqual(hot.mark, "warning-diamond")
+  assert.deepStrictEqual(Model.hoverRows(null), [])
+  assert.strictEqual(Model.hoverNote(c), "2 alerts, open the panel to see")
+  assert.strictEqual(Model.hoverNote(Object.assign({}, c, { failedUnits: [], rebootRequired: false })), "Up 3 days 4 hours")
+  assert.strictEqual(Model.hoverNote(Object.assign({}, c, { failedUnits: [] })), "Reboot required", "one problem is named")
+  assert.strictEqual(Model.hoverNote(Object.assign({}, c, { rebootRequired: false })), "smartd.service failed")
+}
+
+// The prompt lays out the whole line from the first character.
+{
+  assert.strictEqual(Model.revealLine("All clear", 9, true), "All clear\u258C")
+  assert.ok(Model.revealLine("All clear", 3, true).startsWith("All "))
+  assert.ok(Model.revealLine("All clear", 3, true).includes('<font color="#00000000">'))
+  assert.ok(Model.revealLine("a<b", 0, true).includes("&lt;"), "markup in a line is escaped")
+  assert.strictEqual(Model.scramble("Up 3 days", 1, 0), "Up 3 days")
+  assert.strictEqual(Model.scramble("Up 3 days", 0, 0).length, 9)
+  assert.strictEqual(Model.scramble("a b", 0, 0).charAt(1), " ", "spaces hold still")
+  const cells = Model.meterCells({ segments: 10, level: 45, dent: null, ripples: [] })
+  assert.strictEqual(cells.length, 10)
+  assert.strictEqual(cells[3].fill, 1)
+  assert.strictEqual(cells[4].fill, 0.5)
+  assert.strictEqual(cells[5].fill, 0)
 }
 
 console.log("model tests passed")
