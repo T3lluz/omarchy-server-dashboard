@@ -94,15 +94,17 @@ Column {
 
     readonly property real cellWidth: (width - columnSpacing * (columns - 1)) / columns
 
+    // Over the count, so a poll updates the readings in place instead of
+    // building them again.
     Repeater {
-      model: factGrid.facts
+      model: factGrid.facts.length
 
       InfoPair {
-        required property var modelData
         required property int index
+        readonly property var fact: factGrid.facts[index] || ({ label: "", value: "" })
         width: factGrid.cellWidth
-        label: modelData.label
-        value: modelData.value
+        label: fact.label
+        value: fact.value
         delay: factGrid.delay + index * 40
       }
     }
@@ -609,13 +611,12 @@ Column {
     }
 
     Repeater {
-      model: dash.host.failedUnits
+      model: dash.host.failedUnits.length
 
       UnitRow {
-        required property var modelData
         required property int index
         width: parent ? parent.width : 0
-        unit: modelData
+        unit: dash.host.failedUnits[index] || null
         rowKey: "u:" + index
       }
     }
@@ -785,10 +786,11 @@ Column {
         topPadding: Style.space(2)
 
         Repeater {
-          model: networkRoom.rates
+          model: networkRoom.rates.length
 
           Row {
-            required property var modelData
+            required property int index
+            readonly property var modelData: networkRoom.rates[index]
             spacing: Style.space(4)
 
             PixelIcon {
@@ -860,15 +862,16 @@ Column {
           spacing: Style.space(1)
 
           Repeater {
-            model: Model.containerNote(dash.host.containers)
+            id: noteLines
+            readonly property var lines: Model.containerNote(dash.host.containers)
+            model: lines.length
 
             Decode {
-              required property var modelData
               required property int index
               host: dash.host
               width: parent.width
               wrapMode: Text.Wrap
-              value: modelData
+              value: noteLines.lines[index] || ""
               delay: containersRoom.delay + 120 + index * 40
               color: index > 0 && dash.counts.trouble > 0 ? dash.host.lowTone : dash.host.dim
               font.family: dash.host.fontFamily
@@ -926,12 +929,12 @@ Column {
         spacing: Style.space(8)
 
         Repeater {
-          model: dash.diskList
+          model: dash.diskList.length
 
           DiskRow {
-            required property var modelData
+            required property int index
             width: parent ? parent.width : 0
-            disk: modelData
+            disk: dash.diskList[index] || null
             tone: dash.toneFor("disks")
           }
         }
@@ -966,14 +969,15 @@ Column {
 
         Item { width: 1; height: Style.space(4) }
 
+        // Over the count: the list comes new from every poll, and building
+        // 33 rows again every few seconds reset the pointer's row.
         Repeater {
-          model: dash.host.containers
+          model: dash.host.containers.length
 
           ContainerRow {
-            required property var modelData
             required property int index
             width: parent ? parent.width : 0
-            container: modelData
+            container: dash.host.containers[index] || null
             rowKey: "c:" + index
           }
         }
@@ -1013,12 +1017,12 @@ Column {
       spacing: Style.spacing.labelGap
 
       Repeater {
-        model: dash.host.processes.slice(0, 3)
+        model: Math.min(3, dash.host.processes.length)
 
         ProcessRow {
-          required property var modelData
+          required property int index
           width: parent ? parent.width : 0
-          process: modelData
+          process: dash.host.processes[index] || null
         }
       }
     }
@@ -1028,12 +1032,12 @@ Column {
       spacing: Style.spacing.labelGap
 
       Repeater {
-        model: dash.host.processes.slice(3)
+        model: Math.max(0, dash.host.processes.length - 3)
 
         ProcessRow {
-          required property var modelData
+          required property int index
           width: parent ? parent.width : 0
-          process: modelData
+          process: dash.host.processes[index + 3] || null
         }
       }
     }

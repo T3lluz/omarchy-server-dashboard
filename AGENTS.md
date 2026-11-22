@@ -70,6 +70,7 @@ To check a layout without opening the panel on someone's screen, run `Dashboard.
 - **Nothing may write inside the plugin folder at runtime.** The shell watches it and reloads every plugin when a file appears there. Python sets `sys.dont_write_bytecode`; state goes to `~/.local/state` or `~/.config`.
 - **QML changes need `omarchy restart shell`.** Hot reload can keep the old component cached.
 - **Pure logic goes in `Model.js`** (a `.pragma library` with no QML) so `node tests/*.test.js` can run it. Change it with a test. The tests check that every pixel icon the QML or the model names exists in `Pixels.js`, every kit glyph has a pixel icon, every string the bar writes can be drawn in the pixel type, and every icon story ends where it began.
+- **Repeat over a count, not the snapshot's arrays.** Every poll builds new arrays, and a `Repeater` handed a new array destroys and rebuilds every delegate: 33 container rows every few seconds, the pointer's row reset, a banner that stays built again. Repeat over `list.length` and read `list[index]`, so a poll updates the rows in place.
 - **Pixel art stays sharp.** `Rectangle`s with `antialiasing: false`, positions in whole cells of the icon's own grid (`PixelIcon.cell`), never `scale` or a turn other than a quarter (the gear's eighths are the one exception, and only while it turns).
 - Comments say why, in plain sentences. Match the surrounding code.
 

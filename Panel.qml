@@ -609,11 +609,14 @@ Panel {
             opacity: root.pageFade
             transform: Translate { x: root.setupOpen ? 0 : root.pageShift }
 
+            // Over the count, so a banner that stays (a pending reboot) is not
+            // built again on every poll.
             Repeater {
-              model: root.showDashboard ? root.notices : []
+              model: root.showDashboard ? root.notices.length : 0
 
               Notice {
-                required property var modelData
+                required property int index
+                readonly property var modelData: root.notices[index] || ({})
                 width: parent ? parent.width : 0
                 icon: modelData.icon
                 text: modelData.text

@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.5.0-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.5.1-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
