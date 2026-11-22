@@ -16,12 +16,14 @@ How Server Dashboard is put together, for anyone (or any agent) changing it. The
 - `WidgetSettings.qml`: this widget's `shell.json` entry, read from the file (see below).
 - `Model.js`: parses the probe, rates, formatting, the alert rules, and the Rooms look's pure logic (tones, the block face, the pixel type, meter cells, the prompt, icon stories, the mark). Tested by `tests/model.test.js`.
 - `bin/server-dash`: the SSH side (bash): one multiplexed master per target, the password from the keyring through `SSH_ASKPASS`, pinned host keys.
+- Notifications (`ServerClient.sendAlert`, `Model.alertNote`, `calmNote`, `alertState`) are real ones, one per alert key plus `server` for an outage, so they stack with the shell's others, land in its history and keep to Do Not Disturb. Never draw a toast of our own: it would cover the shell's. The picture is `bin/badge` (Python, stdlib): the room's pixel icon on a faint tile of its tone with a mark (a cross, a check, or a disk's meter), drawn at the shell's 40 slot in the focused screen's device pixels into `~/.local/state/omarchy-server-dashboard/alerts/`. The tone comes from the panel through the bar widget (`toneHost.alertTone`), the low tone while the alert stands. `notify-send -p --wait` stays running while the card is up: when the problem clears, the same card is replaced (`-r`) with the good news in the room's tone and goes after five seconds; when its disk or container is gone, it is closed over D-Bus. A click opens the panel. `omarchy-shell io.github.t3lluz.server-dashboard previewAlert` runs a server-down life on a made-up error. Test the words with `node tests/alerts.test.js`.
 
 ## Test
 
 ```bash
 node tests/model.test.js
 node tests/update.test.js
+node tests/alerts.test.js
 python3 -B -m unittest discover tests
 bash -n bin/server-dash
 omarchy-shell io.github.t3lluz.server-dashboard status | jq

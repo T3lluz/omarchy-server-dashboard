@@ -1250,3 +1250,101 @@ function newAlerts(previous, current) {
   return fresh
 }
 
+
+// ------------------------------------------------------------ notifications
+
+// What a notification says and shows, in the panel's look. `key` is one of
+// alerts()' keys, or "server" for the server going quiet. The summary reads
+// like a room's name, the body is one plain sentence with the fact, and the
+// badge (bin/badge) is the room's icon with a mark: a cross for something
+// that stopped, a meter for a disk filling. `tone` names the room's colour;
+// while the alert stands the badge takes the panel's low tone instead.
+function alertNote(key, snapshot, server, errorText) {
+  var kind = String(key).split(":")[0]
+  var name = String(key).substring(kind.length + 1)
+  var on = " on " + server + "."
+  if (kind === "server") {
+    var why = String(errorText || "").trim()
+    return {
+      key: key, icon: "server", tone: roomTone("system"), mark: "cross",
+      title: server + " is down",
+      body: why ? why.replace(/[.!?…]*$/, ".") : "It stopped answering over SSH."
+    }
+  }
+  if (kind === "disk") {
+    var level = diskLevel(snapshot, name)
+    return {
+      key: key, icon: roomPixel("disks"), tone: roomTone("disks"), mark: "meter:" + Math.round(level || 0),
+      title: "Disk almost full",
+      body: name + " on " + server + " is " + Math.round(level || 0) + "% full."
+    }
+  }
+  if (kind === "container") {
+    var c = findContainer(snapshot, name)
+    var restarting = !!c && c.state === "restarting" && !/unhealthy/i.test(c.status + " " + c.state)
+    return {
+      key: key, icon: roomPixel("containers"), tone: roomTone("containers"), mark: "cross",
+      title: restarting ? "Container restarting" : "Container unhealthy",
+      body: name + (restarting ? " keeps restarting" : " is unhealthy") + on
+    }
+  }
+  return {
+    key: key, icon: roomPixel("failed"), tone: roomTone("failed"), mark: "cross",
+    title: "Service failed",
+    body: name + " failed" + on
+  }
+}
+
+// What the same notification turns into once the problem is gone, in the
+// room's own tone, before it leaves by itself.
+function calmNote(key, snapshot, server) {
+  var kind = String(key).split(":")[0]
+  var name = String(key).substring(kind.length + 1)
+  var note = alertNote(key, snapshot, server, "")
+  if (kind === "server") {
+    note.title = server + " is back"
+    note.body = "It answers over SSH again."
+  } else if (kind === "disk") {
+    var level = Math.round(diskLevel(snapshot, name) || 0)
+    note.title = "Disk has room again"
+    note.body = name + " on " + server + " is " + level + "% full."
+    note.mark = "meter:" + level
+    return note
+  } else if (kind === "container") {
+    note.title = "Container healthy again"
+    note.body = name + " is running again on " + server + "."
+  } else {
+    note.title = "Service recovered"
+    note.body = name + " is no longer failed on " + server + "."
+  }
+  note.mark = "check"
+  return note
+}
+
+// What became of an alert in a new snapshot: "on" while it stands, "clear"
+// once its disk, container or service is fine again, "gone" when the thing
+// it was about went away (a disk unmounted, a container removed), which
+// takes the notification down without a word.
+function alertState(key, snapshot) {
+  if (!snapshot) return "on"
+  if (alerts(snapshot).hasOwnProperty(key)) return "on"
+  var kind = String(key).split(":")[0]
+  var name = String(key).substring(kind.length + 1)
+  if (kind === "disk") return diskLevel(snapshot, name) === null ? "gone" : "clear"
+  // Stopped since, rather than well again: stopping one is usually on
+  // purpose, so its card goes without a word instead of saying it runs.
+  if (kind === "container") return containerRunning(findContainer(snapshot, name)) ? "clear" : "gone"
+  return "clear"
+}
+
+function diskLevel(snapshot, mount) {
+  var list = snapshot && snapshot.disks || []
+  for (var i = 0; i < list.length; i++) if (list[i].mount === mount) return list[i].percent
+  return null
+}
+
+function findContainer(snapshot, name) {
+  var list = snapshot && snapshot.containers || []
+  for (var i = 0; i < list.length; i++) if (list[i].name === name) return list[i]
+  return null
+}

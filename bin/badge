@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""
+The picture a Server Dashboard notification carries, in the panel's look: the
+room's pixel icon (Pixels.js) on a faint tile of the room's colour, with a
+small mark under it that says what happened. Drawn for the screen's exact
+scale, a whole number of device pixels per cell, so the shell shows it sharp.
+
+Usage:
+  badge OUT SIZE ICON TONE MARK
+      OUT    the PNG to write (under ~/.local/state, never the plugin folder)
+      SIZE   device pixels square: the shell's 40 slot at the screen's scale
+      ICON   a Pixels.js icon name
+      TONE   #rrggbb (or Qt's #aarrggbb)
+      MARK   meter:LEVEL  five cells filled to LEVEL (0..100), as a disk fills
+             cross        something stopped: down, failed, unhealthy
+             check        it is fine again
+             none         the icon alone
+
+Only the Python standard library is used.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import struct
+import sys
+import zlib
+
+sys.dont_write_bytecode = True
+
+PIXELS_JS = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "Pixels.js")
+
+
+def pixel_icon(name: str, path: str = PIXELS_JS) -> dict | None:
+    """One icon's rectangles from Pixels.js: {"g24": [...], "g12": [...]}."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    m = re.search(r'"' + re.escape(name) + r'":\s*\{\s*g24:\s*(\[.*?\]\]),\s*g12:\s*(\[.*?\]\])\s*\}', text)
+    if not m:
+        return None
+    return {"g24": json.loads(m.group(1)), "g12": json.loads(m.group(2))}
+
+
+def hex_rgb(value: str) -> tuple[int, int, int]:
+    v = value.strip().lstrip("#")
+    if len(v) == 8:  # Qt's #aarrggbb
+        v = v[2:]
+    if not re.fullmatch(r"[0-9a-fA-F]{6}", v):
+        return (255, 255, 255)
+    return (int(v[0:2], 16), int(v[2:4], 16), int(v[4:6], 16))
+
+
+# The small marks, a unit a cell, so their strokes are as thick as the icon's.
+MARKS = {
+    "cross": ["X...X",
+              ".X.X.",
+              "..X..",
+              ".X.X.",
+              "X...X"],
+    "check": ["......X",
+              ".....X.",
+              "X...X..",
+              ".X.X...",
+              "..X...."],
+}
+
+
+def badge_pixels(size: int, icon: dict | None, rgb: tuple[int, int, int], mark: str = "none") -> list[bytearray]:
+    """RGBA rows. The layout is in units of `u` device pixels on a 20 by 20
+    grid: the icon 12 units square, two under it, then a strip 18 by 6 for
+    the mark."""
+    size = max(12, min(512, int(size)))
+    u = max(1, size // 20)
+    rows = [bytearray(size * 4) for _ in range(size)]
+
+    def fill(x: int, y: int, w: int, h: int, alpha: float) -> None:
+        a = max(0, min(255, round(alpha * 255)))
+        for yy in range(max(0, y), min(size, y + h)):
+            row = rows[yy]
+            for xx in range(max(0, x), min(size, x + w)):
+                i = xx * 4
+                # Over what is there (the tile), source-over in straight alpha.
+                da = row[i + 3] / 255
+                sa = a / 255
+                oa = sa + da * (1 - sa)
+                if oa <= 0:
+                    continue
+                for c in range(3):
+                    row[i + c] = round((rgb[c] * sa + row[i + c] * da * (1 - sa)) / oa)
+                row[i + 3] = round(oa * 255)
+
+    def draw(rects: list, x0: int, y0: int, cell: int) -> None:
+        for x, y, w, h in rects:
+            fill(x0 + x * cell, y0 + y * cell, w * cell, h * cell, 1)
+
+    fill(0, 0, size, size, 0.14)
+    has_mark = mark.startswith("meter:") or mark in MARKS
+    # With nothing under it the icon sits in the middle of the tile.
+    top = (size - 20 * u) // 2 if has_mark else (size - 12 * u) // 2
+    # The icon: the 24 grid at half a unit a cell where a unit is even, else the 12.
+    fine = u % 2 == 0
+    if icon:
+        draw(icon["g24" if fine else "g12"], (size - 12 * u) // 2, top, u // 2 if fine else u)
+    if not has_mark:
+        return rows
+
+    sy = top + 14 * u
+    if mark.startswith("meter:"):
+        # A one-unit outline, a unit inside it, five cells two units square a
+        # unit apart, filled to the level: the panel's meter, without a nub.
+        try:
+            level = float(mark.split(":", 1)[1])
+        except ValueError:
+            level = 0.0
+        bx = (size - 18 * u) // 2
+        fill(bx, sy, 18 * u, u, 0.6)
+        fill(bx, sy + 5 * u, 18 * u, u, 0.6)
+        fill(bx, sy + u, u, 4 * u, 0.6)
+        fill(bx + 17 * u, sy + u, u, 4 * u, 0.6)
+        full = max(0.0, min(100.0, level)) / 100 * 5
+        for n in range(5):
+            cx = bx + 2 * u + n * 3 * u
+            fill(cx, sy + 2 * u, 2 * u, 2 * u, 0.12)
+            part = max(0.0, min(1.0, full - n))
+            if part > 0:
+                fill(cx, sy + 2 * u, max(1, round(part * 2 * u)), 2 * u, 1)
+    else:
+        art = MARKS[mark]
+        mx = (size - len(art[0]) * u) // 2
+        my = sy + (6 * u - len(art) * u) // 2
+        for y, line in enumerate(art):
+            for x, c in enumerate(line):
+                if c == "X":
+                    fill(mx + x * u, my + y * u, u, u, 1)
+    return rows
+
+
+def png(rows: list[bytearray]) -> bytes:
+    h = len(rows)
+    w = len(rows[0]) // 4 if rows else 0
+    raw = b"".join(b"\x00" + bytes(r) for r in rows)
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 9)) + chunk(b"IEND", b""))
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 6:
+        print(__doc__.strip(), file=sys.stderr)
+        return 2
+    out, size, name, tone, mark = argv[1:]
+    try:
+        rows = badge_pixels(int(float(size)), pixel_icon(name), hex_rgb(tone), mark)
+    except ValueError:
+        return 2
+    os.makedirs(os.path.dirname(out) or ".", exist_ok=True)
+    tmp = out + ".tmp"
+    with open(tmp, "wb") as f:
+        f.write(png(rows))
+    os.replace(tmp, out)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

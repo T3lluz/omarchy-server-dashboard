@@ -1,6 +1,8 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Hyprland
+import qs.Commons
 import "Model.js" as Model
 
 // Owns the connection to one server: polling, history, and the actions the
@@ -27,8 +29,8 @@ Item {
   property real lastPollMs: 0
   property var peers: []
 
-  // Desktop notifications when the server drops, comes back, or a new alert
-  // (Model.alerts) appears.
+  // Desktop notifications when the server drops, or a new alert
+  // (Model.alerts) appears; each follows its alert until it is over.
   property bool notify: true
   property string displayName: ""
   // The alerts last seen, and whether the server was last seen up; null
@@ -73,11 +75,6 @@ Item {
     probeWatchdog.restart()
   }
 
-  function notifyUser(urgency, title, body) {
-    if (!notify) return
-    Quickshell.execDetached(["notify-send", "-u", urgency, "-a", "Server Dashboard", "-i", "network-server", title, body])
-  }
-
   function serverName() {
     return displayName || hostLabel || "Server"
   }
@@ -89,7 +86,7 @@ Item {
     failedPolls += 1
     if (failedPolls < 2 || announcedDown || lastAlerts === null || needsUser) return
     announcedDown = true
-    notifyUser("critical", serverName() + " is unreachable", errorText || "No answer over SSH")
+    sendAlert(Model.alertNote("server", null, serverName(), errorText), false)
   }
 
   function noteSnapshot(next) {
@@ -97,16 +94,171 @@ Item {
     var current = Model.alerts(next)
     if (announcedDown) {
       announcedDown = false
-      notifyUser("normal", serverName() + " is back", "Answering again over SSH")
+      var back = Model.calmNote("server", next, serverName())
+      // Its own card turns to the good news; after a reboot asked for, or
+      // once the card was dismissed, the news comes on a card of its own.
+      if (notices["server"]) notices["server"].calm(back)
+      else if (notify) sendCalm(back)
     }
+    followAlerts(next)
     if (lastAlerts !== null) {
-      var fresh = Model.newAlerts(lastAlerts, current)
-      if (fresh.length > 0) notifyUser("critical", serverName() + ": " + fresh[0], fresh.slice(1).join("\n"))
+      for (var key in current) if (!lastAlerts.hasOwnProperty(key)) sendAlert(Model.alertNote(key, next, serverName(), ""), false)
     }
     lastAlerts = current
   }
 
+  // ------------------------------------------------------------- alerts
+
+  // An alert is a real notification, so it takes its place in the shell's
+  // stack and history and keeps to Do Not Disturb, dressed in the panel's
+  // look: its picture is a pixel badge (bin/badge) drawn for the focused
+  // screen's scale, and a click opens the panel. The notification follows
+  // its alert: once the server answers again, or the disk, container or
+  // service is fine, the same card turns to the good news in the room's
+  // colour and goes; when the thing it was about is gone, it is withdrawn.
+
+  // The bar widget that knows the room colours (its alertTone).
+  property var toneHost: null
+  // Alert key -> its notice, while its notification is up.
+  property var notices: ({})
+  readonly property string badgeScript: decodeURIComponent(Qt.resolvedUrl("bin/badge").toString().replace(/^file:\/\//, ""))
+  readonly property string alertDir: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy-server-dashboard/alerts"
+  readonly property string openArgv: JSON.stringify(["omarchy-shell", "io.github.t3lluz.server-dashboard", "open"])
+  // Draws the badge, then hands the rest of the arguments to notify-send.
+  readonly property string sendScript: 'python3 -B "$1" "$2" "$3" "$4" "$5" "$6"; img="$2"; [ -s "$img" ] || img=network-server; '
+    + 'shift 6; exec notify-send -a "Server Dashboard" -i "$img" -h "string:omarchy-exec-argv:$OPEN_ARGV" "$@"'
+
+  function sendAlert(note, preview) {
+    if ((!notify && !preview) || notices[note.key]) return
+    var notice = noticeComponent.createObject(root, { note: note, preview: !!preview })
+    var next = Object.assign({}, notices)
+    next[note.key] = notice
+    notices = next
+  }
+
+  // Good news with no card of its own to land on: shown a few seconds.
+  function sendCalm(note) {
+    Quickshell.execDetached(alertCommand(note, "-calm", false, ["-u", "normal", "-t", "5000", "-h", "boolean:transient:true"]))
+  }
+
+  function alertCommand(note, suffix, low, flags) {
+    var file = alertDir + "/" + String(note.key).replace(/[^A-Za-z0-9_-]/g, "_") + suffix + ".png"
+    return ["env", "OPEN_ARGV=" + openArgv, "sh", "-c", sendScript, "server-dash-alert", badgeScript, file,
+            String(badgeSize()), note.icon, toneHex(note.tone, low), note.mark]
+      .concat(flags).concat(["--", note.title, note.body])
+  }
+
+  function followAlerts(snap) {
+    for (var key in notices) {
+      var n = notices[key]
+      if (!n || n.preview || n.answered || key === "server") continue
+      var now = Model.alertState(key, snap)
+      if (now === "clear") n.calm(Model.calmNote(key, snap, serverName()))
+      else if (now === "gone") n.withdraw()
+    }
+  }
+
+  function withdrawAll() {
+    for (var key in notices) if (notices[key]) notices[key].withdraw()
+  }
+
+  function dropNotice(key, notice) {
+    if (notices[key] !== notice) return
+    var next = Object.assign({}, notices)
+    delete next[key]
+    notices = next
+  }
+
+  // The shell draws a sender's picture in a slot 40 wide; at the focused
+  // screen's scale, a whole number of device pixels, so it stays sharp.
+  function badgeSize() {
+    var m = Hyprland.focusedMonitor
+    var scale = m && m.scale > 0 ? m.scale : 1
+    return Math.round(Style.space(40) * scale)
+  }
+
+  function toneHex(name, low) {
+    var c = toneHost && typeof toneHost.alertTone === "function" ? toneHost.alertTone(name, low) : null
+    return c ? String(c) : "#ffffff"
+  }
+
+  // The server going quiet, as the panel would tell it, on a made-up error:
+  // a few seconds later it is back on the same card.
+  function previewAlert() {
+    var old = notices["preview"]
+    if (old) old.withdraw()
+    dropNotice("preview", old)
+    var note = Model.alertNote("server", null, serverName(), "Timed out reaching " + Model.targetHost(target || "server"))
+    note.key = "preview"
+    sendAlert(note, true)
+  }
+
+  Component {
+    id: noticeComponent
+
+    Item {
+      id: notice
+      visible: false
+
+      property var note: ({})
+      property bool preview: false
+      // The notification's id, once the shell has it.
+      property string nid: ""
+      property bool answered: false
+
+      function calm(next) {
+        if (answered || !nid) return
+        answered = true
+        next.key = note.key
+        replacer.command = root.alertCommand(next, "-calm", false,
+          ["-r", nid, "-u", "normal", "-t", "5000", "-h", "boolean:transient:true"])
+        replacer.running = true
+      }
+
+      function withdraw() {
+        if (answered) return
+        answered = true
+        if (!nid) return
+        closer.command = ["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                          "--object-path", "/org/freedesktop/Notifications",
+                          "--method", "org.freedesktop.Notifications.CloseNotification", nid]
+        closer.running = true
+      }
+
+      // --wait keeps this running until the notification closes, which is
+      // how the notice knows it is gone.
+      Process {
+        id: sender
+        stdout: SplitParser {
+          onRead: function(line) {
+            var id = String(line).trim()
+            if (!notice.nid && /^[0-9]+$/.test(id)) notice.nid = id
+          }
+        }
+        onExited: {
+          root.dropNotice(notice.note.key, notice)
+          notice.destroy(1000)
+        }
+      }
+
+      Process { id: replacer }
+      Process { id: closer }
+
+      Timer {
+        interval: 6000
+        running: notice.preview && notice.nid !== ""
+        onTriggered: notice.calm(Model.calmNote("server", root.snapshot, root.serverName()))
+      }
+
+      Component.onCompleted: {
+        sender.command = root.alertCommand(note, "-alert", true, ["-p", "--wait", "-u", "critical"])
+        sender.running = true
+      }
+    }
+  }
+
   function reset() {
+    withdrawAll()
     lastAlerts = null
     announcedDown = false
     failedPolls = 0

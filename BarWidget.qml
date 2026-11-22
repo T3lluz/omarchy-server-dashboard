@@ -179,6 +179,14 @@ BarWidget {
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "notify"; value: root.setting("notify", true) === true }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "autoUpdateCheck"; value: root.setting("autoUpdateCheck", true) === true }
   Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client; property: "displayName"; value: String(root.setting("displayName", "")).trim() }
+  // The colours of a notification's badge: the panel's room colours, the
+  // low one while the alert stands.
+  Binding { restoreMode: Binding.RestoreNone; target: root.client; when: !!root.client && root.isLeader; property: "toneHost"; value: root }
+  function alertTone(name, low) {
+    var panel = panelLoader.item
+    if (!panel) return low ? root.urgent : root.barFg
+    return low ? panel.lowTone : panel.toneOf(name)
+  }
 
   Loader {
     id: panelLoader
@@ -208,6 +216,13 @@ BarWidget {
       root.summon("summon")
     }
     function refresh(): string { root.refresh(); return "ok" }
+    // The server-down notification on a made-up error: it goes up, and a
+    // few seconds later the server is back on the same card.
+    function previewAlert(): string {
+      if (!root.client) return "loading"
+      root.client.previewAlert()
+      return "ok"
+    }
     function status(): string {
       var c = root.client
       if (!c) return JSON.stringify({ status: "loading" })

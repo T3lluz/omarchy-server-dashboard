@@ -18,7 +18,9 @@ jobs:
       - name: Manifest is valid
         run: python3 -c "import json; m = json.load(open('manifest.json')); assert m['id'] and m['version'] and m['entryPoints']"
       - name: Model tests
-        run: node tests/model.test.js
+        run: |
+          node tests/model.test.js
+          node tests/alerts.test.js
       - name: Update tests
         run: |
           node tests/update.test.js
