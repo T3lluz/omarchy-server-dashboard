@@ -22,29 +22,15 @@ Item {
   property bool expanded: false
   property bool dimmed: false
   property int delay: 0
-  // The icon's story (Model.storyOf) and a count that plays it each time it
-  // goes up.
-  property string story: "pop"
+  // Goes up each time the icon should act itself out (Motion.js); `live`
+  // loops it while the state it stands for holds.
   property int tick: 0
-  property real k: 1
-  readonly property var pose: Model.storyPose(story, k)
+  property bool live: false
   readonly property alias iconItem: iconBox
 
   width: parent ? parent.width : 0
   implicitHeight: Math.max(labels.implicitHeight, showFigure ? figure.implicitHeight : 0, iconBox.height)
 
-  onTickChanged: if (!Style.reduceMotion) storyRun.restart()
-
-  NumberAnimation {
-    id: storyRun
-    target: head
-    property: "k"
-    from: 0
-    to: 1
-    duration: Style.duration(head.story === "buzz" ? 520 : 660)
-  }
-
-  // Moves in whole pixels of its own grid, so it never smears.
   PixelIcon {
     id: iconBox
     x: Math.round((head.host.iconColumn - width) / 2)
@@ -52,7 +38,8 @@ Item {
     name: head.icon
     size: head.host.iconColumn
     color: head.dimmed ? head.host.dim : head.tone
-    transform: Translate { x: head.pose.x * iconBox.cell; y: head.pose.y * iconBox.cell }
+    play: head.tick
+    live: head.live
   }
 
   Column {

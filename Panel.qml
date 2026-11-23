@@ -536,6 +536,7 @@ Panel {
             visible: root.configured && !root.setupOpen
             icon: "reload"
             angle: Math.round(root.spin / 90) * 90
+            acts: false
             tooltipText: "Refresh (r)"
             foreground: root.fg
             fontFamily: root.fontFamily

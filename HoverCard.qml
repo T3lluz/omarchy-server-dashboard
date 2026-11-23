@@ -38,6 +38,9 @@ PopupWindow {
   // shell's tooltip does.
   readonly property bool scaleReady: visible && !!barWindow && Math.round(devicePixelRatio * 120) === Math.round(barWindow.devicePixelRatio * 120)
   property bool revealed: false
+  // Counts the times the card came up, so its icons act out each time.
+  property int shows: 0
+  onRevealedChanged: if (revealed) shows++
   onVisibleChanged: if (!visible) revealed = false
   onScaleReadyChanged: if (scaleReady) Qt.callLater(function() { if (card.scaleReady) card.revealed = true })
 
@@ -96,7 +99,10 @@ PopupWindow {
 
         HoverRow {
           required property var modelData
+          required property int index
           width: list.width
+          play: card.shows
+          delay: 120 + index * 90
           entry: modelData
           tone: card.toneOf(modelData.tone)
           foreground: card.foreground

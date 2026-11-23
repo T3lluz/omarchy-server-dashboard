@@ -17,6 +17,10 @@ Item {
   property string fontFamily: Style.font.family
 
   readonly property string pixel: Model.pixelFor(icon)
+  // The icon acts itself out when it shows and when it changes (busy to
+  // done, say), and the busy one keeps turning while it is up.
+  property int plays: 0
+  onPixelChanged: plays++
 
   implicitWidth: size
   implicitHeight: size
@@ -27,6 +31,10 @@ Item {
     name: glyph.pixel
     size: glyph.size
     color: glyph.color
+    play: glyph.plays
+    playOnShow: true
+    delay: 120
+    live: glyph.icon === Model.GLYPHS.busy
   }
 
   Text {

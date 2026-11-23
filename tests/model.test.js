@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, STORIES, roomTone, roomPixel, storyOf, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, storyPose, scramble, barItems, barMark, hoverRows, hoverNote }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, roomTone, roomPixel, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, scramble, barItems, barMark, hoverRows, hoverNote }")()
 const pixelSource = fs.readFileSync(path.join(__dirname, "..", "Pixels.js"), "utf8").replace(/^\.pragma library\s*/, "")
 const Pixels = new Function(pixelSource + "\nreturn { icons }")()
 
@@ -355,17 +355,6 @@ for (const f of process.argv.slice(2)) {
   assert.notStrictEqual(Model.roomToneHex("blue", greys, "#cdd6f4"), Model.roomToneHex("green", greys, "#cdd6f4"))
   const white = { r: 1, g: 1, b: 1 }, black = { r: 0, g: 0, b: 0 }
   assert.ok(Math.abs(Model.contrast(white, black) - 21) < 0.01)
-}
-
-// Stories end where they began.
-for (const k in Model.STORIES) {
-  const story = Model.storyOf(k)
-  assert.deepStrictEqual(Model.storyPose(story, 0), { x: 0, y: 0 })
-  assert.deepStrictEqual(Model.storyPose(story, 1), { x: 0, y: 0 }, story + " ends at rest")
-  for (let k2 = 0; k2 <= 1; k2 += 0.05) {
-    const p = Model.storyPose(story, k2)
-    assert.ok(Number.isInteger(p.x) && Number.isInteger(p.y), story + " moves in whole pixels")
-  }
 }
 
 // The block face, the pixel type and every string the bar writes.

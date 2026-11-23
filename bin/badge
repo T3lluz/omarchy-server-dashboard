@@ -40,7 +40,9 @@ def pixel_icon(name: str, path: str = PIXELS_JS) -> dict | None:
             text = f.read()
     except OSError:
         return None
-    m = re.search(r'"' + re.escape(name) + r'":\s*\{\s*g24:\s*(\[.*?\]\]),\s*g12:\s*(\[.*?\]\])\s*\}', text)
+    # The whole icon's two grids come first; an icon that moves has its
+    # parts after them, which the badge does not need.
+    m = re.search(r'"' + re.escape(name) + r'":\s*\{\s*g24:\s*(\[.*?\]\]),\s*g12:\s*(\[.*?\]\])\s*[,}]', text)
     if not m:
         return None
     return {"g24": json.loads(m.group(1)), "g12": json.loads(m.group(2))}

@@ -21,6 +21,7 @@ jobs:
         run: |
           node tests/model.test.js
           node tests/alerts.test.js
+          node tests/motion.test.js
       - name: Update tests
         run: |
           node tests/update.test.js

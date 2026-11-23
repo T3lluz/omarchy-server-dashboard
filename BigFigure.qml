@@ -103,6 +103,8 @@ Item {
       anchors.horizontalCenter: parent.horizontalCenter
       name: figure.mark
       size: figure.markSize
+      // The alert mark blinks while it stands.
+      live: visible
       color: figure.dimmed ? Qt.darker(figure.foreground, 1.5) : figure.tone
     }
 

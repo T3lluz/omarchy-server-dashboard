@@ -312,19 +312,29 @@ BarWidget {
           dimColor: root.mark.tone === "dim" ? Qt.darker(root.barFg, 2.2) : root.dim
         }
 
+        // The alert: it blinks as it comes up, then once a round while it
+        // stands.
         PixelIcon {
           visible: root.mark.icon !== "server"
           name: root.mark.icon
           unit: root.iconUnit
           color: root.toneColor(root.mark.tone)
+          play: visible ? 1 : 0
+          live: visible
         }
       }
 
+      // Over a count, so a poll updates the stats in place and an icon
+      // sees its reading cross into the red or back.
       Repeater {
-        model: root.vertical ? [] : root.items
+        model: root.vertical ? 0 : root.items.length
 
         Row {
-          required property var modelData
+          required property int index
+          readonly property var modelData: root.items[index] || ({ icon: "", text: "", hot: false })
+          readonly property bool hot: !!modelData.hot
+          property int turns: 0
+          onHotChanged: turns++
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(3)
 
@@ -333,6 +343,7 @@ BarWidget {
             name: modelData.icon
             unit: root.iconUnit
             color: modelData.hot ? root.urgent : root.barFg
+            play: turns
           }
 
           PixelText {

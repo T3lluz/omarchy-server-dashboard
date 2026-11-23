@@ -15,6 +15,10 @@ Rectangle {
   property color foreground: "white"
   property int unit: 2
   property string fontFamily: Style.font.family
+  // Goes up each time the card shows: the icon acts itself out, `delay` ms
+  // later, so the rows go one after another.
+  property int play: 0
+  property int delay: 0
   readonly property bool known: Model.hasLevel(hoverRow.entry.level)
 
   height: Math.max(name.implicitHeight, Style.space(14)) + Style.space(6) * 2
@@ -28,6 +32,8 @@ Rectangle {
     name: hoverRow.entry.icon
     size: Style.font.body
     color: hoverRow.tone
+    play: hoverRow.play
+    delay: hoverRow.delay
   }
 
   Text {
@@ -62,6 +68,7 @@ Rectangle {
       name: hoverRow.entry.mark || "warning-diamond"
       size: Style.font.body
       color: hoverRow.tone
+      live: visible
     }
   }
 

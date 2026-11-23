@@ -175,6 +175,13 @@ Column {
     property var part: null
     property color tone: dash.host.fg
     property int delay: 0
+    // Goes up with the room; the icon plays `iconDelay` ms after it, and
+    // again when the reading turns hot or cools, looping while it is hot.
+    property int play: 0
+    property int iconDelay: 0
+    readonly property bool hot: !!part && !!part.hot
+    property int turns: 0
+    onHotChanged: turns++
     readonly property alias meter: cellMeter
     readonly property color shade: part && part.hot ? dash.host.lowTone : tone
     readonly property bool known: !!part && Model.hasLevel(part.level)
@@ -189,6 +196,9 @@ Column {
         name: cell.part ? cell.part.icon : ""
         size: Style.font.bodySmall
         color: cell.shade
+        play: cell.play + cell.turns
+        delay: cell.iconDelay
+        live: cell.hot
       }
 
       Text {
@@ -295,6 +305,7 @@ Column {
         name: "warning-diamond"
         size: Style.font.bodySmall
         color: dash.host.lowTone
+        live: visible
       }
     }
 
@@ -324,24 +335,11 @@ Column {
     property string icon: ""
     property string title: ""
     property color tone: dash.host.fg
-    property string story: "pop"
     property int tick: 0
-    property real k: 1
-    readonly property var pose: Model.storyPose(story, k)
+    property bool live: false
 
     width: parent ? parent.width : 0
     implicitHeight: Math.max(tileIcon.height, tileTitle.implicitHeight)
-
-    onTickChanged: if (!Style.reduceMotion) tileStory.restart()
-
-    NumberAnimation {
-      id: tileStory
-      target: tileHead
-      property: "k"
-      from: 0
-      to: 1
-      duration: Style.duration(tileHead.story === "buzz" ? 520 : 660)
-    }
 
     PixelIcon {
       id: tileIcon
@@ -349,7 +347,8 @@ Column {
       name: tileHead.icon
       size: Style.font.bodySmall
       color: tileHead.tone
-      transform: Translate { x: tileHead.pose.x * tileIcon.cell; y: tileHead.pose.y * tileIcon.cell }
+      play: tileHead.tick
+      live: tileHead.live
     }
 
     Text {
@@ -594,6 +593,9 @@ Column {
     clickable: false
     delay: dash.delayOf("failed")
     spacing: Style.space(4)
+    // A service failing or coming back plays the alert again.
+    readonly property int count: dash.host.failedUnits.length
+    onCountChanged: story++
 
     RoomHeader {
       host: dash.host
@@ -604,8 +606,8 @@ Column {
       value: dash.host.failedUnits.length
       suffix: ""
       showChevron: false
-      story: Model.storyOf("failed")
       tick: failedRoom.story
+      live: failedRoom.visible
       delay: failedRoom.delay + 120
     }
 
@@ -634,6 +636,10 @@ Column {
     onClicked: dash.host.toggleRoom("system")
     onHoveredChanged: dash.track(systemRoom, "system")
     onKeyedChanged: if (keyed) dash.host.scrollIntoView(systemRoom)
+    // The processor running hot: the needle plays into the red, then flicks
+    // there while it stays.
+    readonly property bool hot: !!dash.cells[0] && !!dash.cells[0].hot
+    onHotChanged: story++
 
     RoomHeader {
       host: dash.host
@@ -643,8 +649,8 @@ Column {
       status: Model.systemStatus(dash.snap)
       showFigure: false
       expanded: systemRoom.expanded
-      story: Model.storyOf("system")
       tick: systemRoom.story
+      live: systemRoom.hot
       delay: systemRoom.delay + 120
     }
 
@@ -654,9 +660,9 @@ Column {
       spacing: Style.space(12)
       readonly property real cellWidth: (width - spacing * (Math.max(1, dash.cells.length) - 1)) / Math.max(1, dash.cells.length)
 
-      PartCell { id: cpuCell; width: cellRow.cellWidth; part: dash.cells[0] || null; tone: systemRoom.tone; delay: systemRoom.delay + 80 }
-      PartCell { id: memoryCell; visible: dash.cells.length > 1; width: cellRow.cellWidth; part: dash.cells[1] || null; tone: systemRoom.tone; delay: systemRoom.delay + 130 }
-      PartCell { id: tempCell; visible: dash.cells.length > 2; width: cellRow.cellWidth; part: dash.cells[2] || null; tone: systemRoom.tone; delay: systemRoom.delay + 180 }
+      PartCell { id: cpuCell; width: cellRow.cellWidth; part: dash.cells[0] || null; tone: systemRoom.tone; delay: systemRoom.delay + 80; play: systemRoom.story; iconDelay: 160 }
+      PartCell { id: memoryCell; visible: dash.cells.length > 1; width: cellRow.cellWidth; part: dash.cells[1] || null; tone: systemRoom.tone; delay: systemRoom.delay + 130; play: systemRoom.story; iconDelay: 300 }
+      PartCell { id: tempCell; visible: dash.cells.length > 2; width: cellRow.cellWidth; part: dash.cells[2] || null; tone: systemRoom.tone; delay: systemRoom.delay + 180; play: systemRoom.story; iconDelay: 440 }
     }
 
     Drawer {
@@ -700,12 +706,14 @@ Column {
       onClicked: dash.host.toggleRoom("disks")
       onHoveredChanged: dash.track(disksRoom, "disks")
       onKeyedChanged: if (keyed) dash.host.scrollIntoView(disksRoom)
+      // A disk mounted, gone, or passing 90%.
+      readonly property string tally: dash.diskList.length + "/" + dash.diskList.filter(function(d) { return d.hot }).length
+      onTallyChanged: story++
 
       TileHeader {
         icon: Model.roomPixel("disks")
         title: dash.diskList.length > 1 ? "Disks" : "Disk"
         tone: disksRoom.tone
-        story: Model.storyOf("disks")
         tick: disksRoom.story
       }
 
@@ -772,7 +780,6 @@ Column {
         icon: Model.roomPixel("network")
         title: "Network"
         tone: networkRoom.tone
-        story: Model.storyOf("network")
         tick: networkRoom.story
       }
 
@@ -796,6 +803,9 @@ Column {
               name: modelData.icon
               size: Style.font.bodySmall
               color: networkRoom.tone
+              // After the tile's own arrows, the download first.
+              play: networkRoom.story
+              delay: 260 + index * 160
             }
 
             PixelText {
@@ -825,6 +835,11 @@ Column {
       onClicked: dash.host.toggleRoom("containers")
       onHoveredChanged: dash.track(containersRoom, "containers")
       onKeyedChanged: if (keyed) dash.host.scrollIntoView(containersRoom)
+      // One started, stopped or turned unhealthy; the lid keeps lifting
+      // while one starts, stops or restarts.
+      readonly property string tally: dash.counts.running + "/" + dash.counts.trouble
+      onTallyChanged: story++
+      readonly property bool working: dash.host.busyAction.indexOf("docker-") === 0
 
       readonly property color shade: dash.counts.trouble > 0 ? dash.host.lowTone : tone
 
@@ -832,8 +847,8 @@ Column {
         icon: Model.roomPixel("containers")
         title: "Containers"
         tone: containersRoom.shade
-        story: Model.storyOf("containers")
         tick: containersRoom.story
+        live: containersRoom.working
       }
 
       // How many run, counting up with the meter of running ones, and what
@@ -1004,7 +1019,6 @@ Column {
       status: Model.processesStatus(dash.snap)
       showFigure: false
       expanded: processesRoom.expanded
-      story: Model.storyOf("processes")
       tick: processesRoom.story
       delay: processesRoom.delay + 120
     }

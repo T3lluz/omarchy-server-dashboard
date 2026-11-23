@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.5.3-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.6.0-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
@@ -18,7 +18,7 @@
 
 - **A panel of rooms**, in the look Batteries and Sonus share. The system (CPU, memory and temperature, each in big block digits over a meter of cells), a row of small rooms for the disk (how full the root disk is), the network (download and upload) and the containers (how many run), and the processes each get a room tinted in a colour from your theme. Failed systemd services get one of their own, with restart, when there are any. SSH, btop, reboot and shutdown sit in four small rooms at the bottom, in reach however far the rest scrolls.
 - **Click a room to open it:** the system's load, swap, processor and kernel; every disk with its meter and where it lives; what the network has moved since boot; every Docker container with start, stop and restart; the rest of the processes. Each room also holds the switches for what of it the bar shows.
-- **It comes alive when it opens:** the rooms rise in, the meters fill while their numbers count up, the readings decode, and the server mark's lights come on. While the server connects or reboots the lights take turns. The line under the name types itself out: all clear, the uptime, the system, or what is wrong. Nothing moves with reduced motion on.
+- **It comes alive when it opens:** the rooms rise in, the meters fill while their numbers count up, the readings decode, the server mark's lights come on, and each icon acts out what it is: the gauge's needle revs, a gap runs round the disk, the box's lid lifts, the mercury climbs. Icons play again when what they stand for changes, and keep at it gently while it holds, a reboot's arrows turning or an alert blinking. While the server connects or reboots the lights take turns. The line under the name types itself out: all clear, the uptime, the system, or what is wrong. Nothing moves with reduced motion on.
 - **The bar shows what you pick:** the server mark alone, or with CPU, memory, root disk, temperature and network rates, as sharp pixel icons and digits in the bar's own colours. Something wrong turns the mark into an alert. Resting the pointer on it opens a card with every reading.
 - **Notifications:** one when the server stops answering, and one for each new problem: a container turning unhealthy or restart-looping, a filesystem passing 90%, a systemd unit failing. Each carries a pixel badge in its room's look and opens the panel on a click. When the problem clears, the same card says so in the room's colour and goes after a few seconds; they stack with your other notifications and keep to Do Not Disturb. Starting the shell never notifies about what was already wrong.
 - **Nothing on the server:** every poll is one shell command reading `/proc`, `/sys`, `df`, `ps`, `docker` and `systemctl`, over a single multiplexed SSH session, so the server sees one login rather than one every few seconds.
@@ -97,6 +97,7 @@ omarchy-shell io.github.t3lluz.server-dashboard status     # JSON: connection, C
 
 ```bash
 node tests/model.test.js
+node tests/motion.test.js
 bash -n bin/server-dash
 omarchy plugin validate .
 omarchy restart shell    # pick up QML changes

@@ -4,7 +4,8 @@ import "Model.js" as Model
 
 // One of the panel's four actions (a shell, btop, reboot, shutdown): a small
 // room with its pixel icon over its name. It acts its icon out when it comes
-// in and when clicked; reboot and shutdown take the alert tone under the
+// in, under the pointer and when clicked, and keeps at it while its reboot
+// or shutdown runs; reboot and shutdown take the alert tone under the
 // pointer, since they ask before they act.
 Room {
   id: tile
@@ -13,9 +14,9 @@ Room {
   // The cursor key it answers to, "a:<i>".
   property string cursor: ""
   readonly property bool drastic: !!action && (action.key === "reboot" || action.key === "poweroff")
-  readonly property string storyName: Model.storyOf(action ? action.key : "")
-  property real k: 1
-  readonly property var pose: Model.storyPose(storyName, k)
+  // Its own action is running: a reboot or shutdown on its way.
+  readonly property bool running: drastic && host.busyAction.indexOf(action.key + ":") === 0
+  property int hovers: 0
 
   tone: host.toneOf("")
   pad: Style.space(8)
@@ -24,17 +25,9 @@ Room {
   enabled: !(drastic && host.busyAction !== "")
   opacity: fade * (enabled ? 1 : 0.5)
   onClicked: host.runAction(action.key)
-  onHoveredChanged: hovered ? host.hover(cursor) : host.unhover(cursor)
-  // The room counts up each time its icon should act itself out.
-  onStoryChanged: if (!Style.reduceMotion) storyRun.restart()
-
-  NumberAnimation {
-    id: storyRun
-    target: tile
-    property: "k"
-    from: 0
-    to: 1
-    duration: Style.duration(660)
+  onHoveredChanged: {
+    if (hovered) { host.hover(cursor); hovers++ }
+    else host.unhover(cursor)
   }
 
   PixelIcon {
@@ -43,7 +36,10 @@ Room {
     name: Model.roomPixel(tile.action ? tile.action.key : "")
     size: Style.font.heading
     color: tile.drastic && (tile.hovered || tile.keyed) ? tile.host.lowTone : tile.host.fg
-    transform: Translate { x: tile.pose.x * tileIcon.cell; y: tile.pose.y * tileIcon.cell }
+    // Acts out on coming in, on a click and under the pointer; loops while
+    // its reboot or shutdown runs.
+    play: tile.story + tile.hovers
+    live: tile.running
   }
 
   Text {
