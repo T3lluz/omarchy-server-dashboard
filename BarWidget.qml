@@ -30,6 +30,16 @@ BarWidget {
   }
   readonly property bool showsMetrics: barStats.length > 0 && !vertical
 
+  // The plugin's text face: Monocraft (OFL), shipped in assets/fonts so it
+  // needs no system install. Both files register as one family, so a bold
+  // label gets the real bold cut instead of a smeared synthetic one. Until
+  // the files load, and if they ever fail to, text keeps the shell's font.
+  // The pixel type, the block digits and the icons are drawn, not typed,
+  // and do not use it.
+  FontLoader { id: monocraft; source: Qt.resolvedUrl("assets/fonts/Monocraft.ttf") }
+  FontLoader { id: monocraftBold; source: Qt.resolvedUrl("assets/fonts/Monocraft-Bold.ttf") }
+  readonly property string textFont: monocraft.status === FontLoader.Ready ? monocraft.name : Style.font.family
+
   property var leader: root
   readonly property bool isLeader: leader === root
   readonly property var ownClient: ownClientLoader.item ? ownClientLoader.item : null
@@ -260,13 +270,14 @@ BarWidget {
     note: root.online ? Model.hoverNote(root.client.snapshot) : ""
     palette: panelLoader.item ? panelLoader.item.palette : ({})
     unit: root.pixelUnit
-    fontFamily: button.fontFamily
+    fontFamily: root.textFont
   }
 
   WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
+    fontFamily: root.textFont
     hasVisualContent: true
     // The hover card above takes the place of the plain tooltip once the
     // server answers.

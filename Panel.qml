@@ -35,7 +35,7 @@ Panel {
   // grey, and a problem must not look calmer than the readings around it, so
   // there it is the text colour. Every alert also carries a mark.
   readonly property color lowTone: Model.contrast(Commons.Color.urgent, Commons.Color.background) >= 3.5 ? Commons.Color.urgent : fg
-  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
+  readonly property string fontFamily: hostWidget ? hostWidget.textFont : Style.font.family
 
   readonly property real roomPad: Style.space(10)
   readonly property real roomGap: Style.space(3)

@@ -128,6 +128,5 @@ Item {
     mark: head.mark
     suffix: head.suffix
     dimmed: head.figureDimmed
-    fontFamily: head.host.fontFamily
   }
 }

@@ -23,7 +23,6 @@ Item {
   property string suffix: "%"
   // A level that says nothing now reads quieter, as an unknown one does.
   property bool dimmed: false
-  property string fontFamily: Style.font.family
   property real fontSize: Style.font.bodySmall
   // The widest it may be; 0 for no limit. A figure that would run past it
   // (a full disk's "100%" in a quarter-width tile) draws its blocks smaller
@@ -61,16 +60,18 @@ Item {
 
   FontMetrics {
     id: metrics
-    font.family: figure.fontFamily
+    font.family: Style.font.family
     font.pixelSize: figure.fontSize
   }
 
-  // The width of the font's own characters, measured as drawn.
+  // The width of the shell font's characters, measured as drawn. The grid
+  // stays on the shell's font, not the panel's text face, so the block face
+  // keeps its proportions whatever the text is set in.
   Text {
     id: grid
     visible: false
     text: "0000000000"
-    font.family: figure.fontFamily
+    font.family: Style.font.family
     font.pixelSize: figure.fontSize
   }
 

@@ -210,7 +210,6 @@ Column {
       foreground: dash.host.fg
       mark: cell.part && cell.part.hot ? "warning-diamond" : ""
       suffix: cell.part ? cell.part.suffix : "%"
-      fontFamily: dash.host.fontFamily
       fontSize: Style.font.caption
       maxWidth: cell.width
     }
@@ -717,7 +716,6 @@ Column {
         tone: disksRoom.tone
         foreground: dash.host.fg
         mark: dash.diskList.some(function(d) { return d.hot }) ? "warning-diamond" : ""
-        fontFamily: dash.host.fontFamily
         fontSize: Style.font.caption
         maxWidth: parent.width
       }
@@ -851,7 +849,6 @@ Column {
           tone: containersRoom.shade
           foreground: dash.host.fg
           mark: dash.counts.trouble > 0 ? "warning-diamond" : ""
-          fontFamily: dash.host.fontFamily
           fontSize: Style.font.caption
           maxWidth: parent.width / 2
         }

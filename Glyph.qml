@@ -35,7 +35,9 @@ Item {
     textFormat: Text.PlainText
     text: glyph.icon
     color: glyph.color
-    font.family: glyph.fontFamily
+    // The typed glyphs are Nerd Font icons, which only the shell's font has;
+    // the panel's text face would leave them to a random fallback.
+    font.family: Style.font.family
     font.pixelSize: glyph.size
   }
 }
