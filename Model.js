@@ -395,6 +395,15 @@ function containerStatus(container) {
     .replace(/^(\w+) (About|Less)/, function(m, verb, word) { return verb + " " + word.toLowerCase() })
 }
 
+// A status as a row draws it: a number stays with its word ("5 minutes",
+// "code 137"), so a status too long for one line breaks at its comma or
+// between phrases, never between the two.
+function keepUnits(text) {
+  return String(text || "")
+    .replace(/(\d+) (?=(second|minute|hour|day|week|month|year)s?\b)/g, "$1\u00A0")
+    .replace(/\b(code|About|about|Less|less) (?=\d)/g, "$1\u00A0")
+}
+
 // ---------------------------------------------------------------- panel
 
 // A number as the panel prints it: one decimal under 100.
@@ -1075,9 +1084,24 @@ function revealLine(line, typed, cursorOn) {
 
 // ---------------------------------------------------------------- motion
 
+// Where a name may break onto the next line. Text wraps at spaces and after
+// a hyphen; names without either (immich_machine_learning,
+// kworker/R-amdgpu_dm_hpd_rx_offload_wq, /srv/backups) would otherwise break
+// at whatever letter runs out of room, leaving one on a line of its own. A
+// zero-width space after each _ / . : @ lets them break there instead; it
+// draws nothing. A dot or colon breaks only before a letter, so 14.5 GB and
+// 100.0% stay whole.
+var BREAK = "\u200B"
+function breakable(text) {
+  return String(text || "")
+    .replace(/([_\/@])(?=[^\s\u200B])/g, "$1" + BREAK)
+    .replace(/([.:])(?=[A-Za-z])/g, "$1" + BREAK)
+}
+
 // Text arriving the way a terminal decodes it: the first `progress` of it
 // is real, the rest cycles through glyphs. Spaces and separators stay put so
-// the line keeps its shape. `seed` varies the noise between runs.
+// the line keeps its shape, and so its break points: a line must not wrap
+// differently while it decodes. `seed` varies the noise between runs.
 var GLITCH = "#%&*+=<>/\\|~:;?!$@"
 
 function scramble(text, progress, seed) {
@@ -1087,7 +1111,7 @@ function scramble(text, progress, seed) {
   var out = ""
   for (var i = 0; i < text.length; i++) {
     var ch = text.charAt(i)
-    if (i < keep || ch === " " || ch === "·") { out += ch; continue }
+    if (i < keep || " ·-_/.:@\u200B".indexOf(ch) !== -1) { out += ch; continue }
     var h = (((i + 1) * 73856093) ^ (((seed || 0) + 1) * 19349663) ^ ((tick + 1) * 83492791)) >>> 0
     out += GLITCH.charAt(h % GLITCH.length)
   }

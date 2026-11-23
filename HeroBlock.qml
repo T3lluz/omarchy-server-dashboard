@@ -99,7 +99,7 @@ Item {
         anchors.verticalCenter: parent.verticalCenter
         wrapMode: Text.Wrap
         textFormat: Text.PlainText
-        text: hero.title
+        text: Model.breakable(hero.title)
         color: hero.host.fg
         font.family: hero.host.fontFamily
         font.pixelSize: Style.font.title

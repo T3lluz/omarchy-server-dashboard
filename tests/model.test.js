@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, roomTone, roomPixel, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, scramble, barItems, barMark, hoverRows, hoverNote }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, roomTone, roomPixel, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, scramble, breakable, keepUnits, barItems, barMark, hoverRows, hoverNote }")()
 const pixelSource = fs.readFileSync(path.join(__dirname, "..", "Pixels.js"), "utf8").replace(/^\.pragma library\s*/, "")
 const Pixels = new Function(pixelSource + "\nreturn { icons }")()
 
@@ -355,6 +355,37 @@ for (const f of process.argv.slice(2)) {
   assert.notStrictEqual(Model.roomToneHex("blue", greys, "#cdd6f4"), Model.roomToneHex("green", greys, "#cdd6f4"))
   const white = { r: 1, g: 1, b: 1 }, black = { r: 0, g: 0, b: 0 }
   assert.ok(Math.abs(Model.contrast(white, black) - 21) < 0.01)
+}
+
+// Names break at their own separators, never mid-word, and decoding keeps
+// the breaks where they are.
+{
+  const Z = "\u200B"
+  assert.strictEqual(Model.breakable("immich_machine_learning"), "immich_" + Z + "machine_" + Z + "learning")
+  assert.strictEqual(Model.breakable("/srv/backups"), "/" + Z + "srv/" + Z + "backups")
+  assert.strictEqual(Model.breakable("kworker/R-amdgpu"), "kworker/" + Z + "R-amdgpu")
+  assert.strictEqual(Model.breakable("smartd.service"), "smartd." + Z + "service")
+  assert.strictEqual(Model.breakable("a b. c"), "a b. c", "nothing before a space")
+  assert.strictEqual(Model.breakable("kworker at 100.0%, 14.5 GB, 12:30"), "kworker at 100.0%, 14.5 GB, 12:30", "numbers stay whole")
+  assert.strictEqual(Model.breakable(Model.breakable("a_b")), "a_" + Z + "b", "twice is once")
+  assert.strictEqual(Model.breakable(""), "")
+  assert.strictEqual(Model.breakable(null), "")
+  const name = Model.breakable("immich_machine-learning/x.y")
+  for (let p = 0; p < 1; p += 0.1) {
+    const s = Model.scramble(name, p, 3)
+    assert.strictEqual(s.length, name.length)
+    for (let i = 0; i < name.length; i++) if (" ·-_/.:@\u200B".includes(name[i])) assert.strictEqual(s[i], name[i], "separators hold while decoding")
+  }
+}
+
+// A number keeps its word on a status line.
+{
+  const N = "\u00A0"
+  assert.strictEqual(Model.keepUnits("Exited with code 137, 5 minutes ago"), "Exited with code" + N + "137, 5" + N + "minutes ago")
+  assert.strictEqual(Model.keepUnits("Up 11 days, healthy"), "Up 11" + N + "days, healthy")
+  assert.strictEqual(Model.keepUnits("Restarting (1) 3 seconds ago"), "Restarting (1) 3" + N + "seconds ago")
+  assert.strictEqual(Model.keepUnits("Up 2 hours"), "Up 2" + N + "hours")
+  assert.strictEqual(Model.keepUnits("Created"), "Created")
 }
 
 // The block face, the pixel type and every string the bar writes.

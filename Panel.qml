@@ -201,14 +201,14 @@ Panel {
     var list = []
     if (!client) return list
     if (status === "error" && errorKind === "hostkey" && !showSetup)
-      list.push({ key: "hostkey", tone: "urgent", icon: Model.GLYPHS.key, text: client.errorText, action: "trustKey", actionLabel: "Trust it" })
+      list.push({ key: "hostkey", tone: "urgent", icon: Model.GLYPHS.key, text: Model.breakable(client.errorText), action: "trustKey", actionLabel: "Trust it" })
     else if (status === "error" && !showSetup)
-      list.push({ key: "offline", tone: "urgent", icon: Model.GLYPHS.alert, text: client.errorText, action: "retry", actionLabel: "Retry" })
+      list.push({ key: "offline", tone: "urgent", icon: Model.GLYPHS.alert, text: Model.breakable(client.errorText), action: "retry", actionLabel: "Retry" })
     if (client.actionStatus !== "")
       list.push({ key: "action", tone: client.actionFailed ? "urgent" : "accent", busy: busyAction !== "",
-                  icon: busyAction !== "" ? Model.GLYPHS.busy : (client.actionFailed ? Model.GLYPHS.alert : Model.GLYPHS.done), text: client.actionStatus })
+                  icon: busyAction !== "" ? Model.GLYPHS.busy : (client.actionFailed ? Model.GLYPHS.alert : Model.GLYPHS.done), text: Model.breakable(client.actionStatus) })
     var alerts = online && !showSetup ? Model.alertLines(snap) : []
-    if (alerts.length > 0) list.push({ key: "alerts", tone: "urgent", icon: Model.GLYPHS.alert, text: alerts.join("\n") })
+    if (alerts.length > 0) list.push({ key: "alerts", tone: "urgent", icon: Model.GLYPHS.alert, text: Model.breakable(alerts.join("\n")) })
     if (updater && updater.notice) list.push(updater.notice)
     return list
   }

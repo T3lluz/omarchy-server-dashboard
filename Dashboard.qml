@@ -45,20 +45,25 @@ Column {
 
   // ------------------------------------------------------------ pieces
 
-  // A label on the left, its value on the right. A long value wraps; it is
-  // never cut.
+  // A label on the left, its value on the right. Either wraps when long and
+  // neither is cut or runs into the other: the value keeps its own width or
+  // half the line, whichever is less, and the label the rest. A mount path
+  // as the label (/srv/backups beside /dev/sdb1) needs this.
   component InfoPair: Item {
     id: pair
     property string label: ""
     property string value: ""
     property int delay: 0
+    readonly property real gap: Style.space(8)
 
     implicitHeight: Math.max(pairLabel.implicitHeight, pairValue.implicitHeight)
 
     Text {
       id: pairLabel
+      width: Math.min(implicitWidth, pair.width - Math.min(pairValue.implicitWidth, pair.width / 2) - pair.gap)
       textFormat: Text.PlainText
-      text: pair.label
+      wrapMode: Text.Wrap
+      text: Model.breakable(pair.label)
       color: dash.host.fg
       opacity: 0.6
       font.family: dash.host.fontFamily
@@ -69,10 +74,10 @@ Column {
       id: pairValue
       host: dash.host
       anchors.right: parent.right
-      width: Math.min(implicitWidth, pair.width - pairLabel.implicitWidth - Style.space(8))
+      width: Math.min(implicitWidth, pair.width - pairLabel.width - pair.gap)
       horizontalAlignment: Text.AlignRight
       wrapMode: Text.Wrap
-      value: pair.value
+      value: Model.breakable(pair.value)
       delay: pair.delay
       color: pair.value === "--" ? dash.host.dim : dash.host.fg
       font.family: dash.host.fontFamily
@@ -268,7 +273,7 @@ Column {
       anchors.verticalCenter: parent.verticalCenter
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
-      text: diskRow.disk ? diskRow.disk.name : ""
+      text: diskRow.disk ? Model.breakable(diskRow.disk.name) : ""
       color: dash.host.fg
       font.family: dash.host.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -412,7 +417,7 @@ Column {
       anchors.verticalCenter: parent.verticalCenter
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
-      text: row.container ? row.container.name : ""
+      text: row.container ? Model.breakable(row.container.name) : ""
       color: row.ink
       font.family: dash.host.fontFamily
       font.pixelSize: Style.font.bodySmall
@@ -424,7 +429,11 @@ Column {
       anchors.rightMargin: Style.space(4)
       anchors.verticalCenter: parent.verticalCenter
       // At least the buttons' room, so swapping to them never moves the name.
-      width: Math.max(buttons.implicitWidth, Math.min(rowStatus.implicitWidth, Style.space(140)))
+      // A long status takes what a short name leaves it, so "Restarting (1)
+      // 3 seconds ago" stays on one line beside "jellyseerr"; beside a long
+      // name it wraps in its own 140.
+      width: Math.max(buttons.implicitWidth, Math.min(rowStatus.implicitWidth,
+        Math.max(Style.space(140), row.width - rowName.anchors.leftMargin - rowName.implicitWidth - Style.space(8) - Style.space(4))))
       height: rowStatus.implicitHeight
 
       Text {
@@ -434,7 +443,7 @@ Column {
         horizontalAlignment: Text.AlignRight
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
-        text: row.busy ? "Working…" : Model.containerStatus(row.container)
+        text: row.busy ? "Working…" : Model.keepUnits(Model.containerStatus(row.container))
         color: row.sick ? dash.host.lowTone : dash.host.dim
         font.family: dash.host.fontFamily
         font.pixelSize: Style.font.caption
@@ -504,7 +513,7 @@ Column {
         width: parent.width
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
-        text: unitRow.unit ? unitRow.unit.name : ""
+        text: unitRow.unit ? Model.breakable(unitRow.unit.name) : ""
         color: dash.host.fg
         font.family: dash.host.fontFamily
         font.pixelSize: Style.font.bodySmall
@@ -549,7 +558,7 @@ Column {
       width: procCpu.x - Style.space(10)
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
-      text: proc.process ? proc.process.name : ""
+      text: proc.process ? Model.breakable(proc.process.name) : ""
       color: dash.host.fg
       opacity: 0.6
       font.family: dash.host.fontFamily
@@ -758,6 +767,9 @@ Column {
       onKeyedChanged: if (keyed) dash.host.scrollIntoView(networkRoom)
 
       readonly property var rates: Model.networkRates(dash.snap)
+      // The wider of the two rates as they end up, so both draw at one size.
+      readonly property string widestRate: rates.map(function(r) { return r.parts ? Model.rateText(r.parts, 1) + r.parts.unit : "--" })
+        .reduce(function(a, b) { return Model.pixelText(b).width > Model.pixelText(a).width ? b : a }, "")
 
       // The rates count up with the rooms, in the unit they end in.
       property real k: 1
@@ -812,6 +824,10 @@ Column {
               anchors.verticalCenter: parent.verticalCenter
               text: modelData.parts ? Model.rateText(modelData.parts, networkRoom.k) + modelData.parts.unit : "--"
               size: Style.font.caption
+              // "942M/s" is wider than a quarter tile; both rates draw a step
+              // smaller then.
+              maxWidth: networkRoom.width - networkRoom.pad * 2 - x
+              fitText: networkRoom.widestRate
               color: modelData.parts ? dash.host.fg : dash.host.dim
             }
           }

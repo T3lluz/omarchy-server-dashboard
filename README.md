@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.6.0-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.6.1-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
@@ -103,7 +103,7 @@ omarchy plugin validate .
 omarchy restart shell    # pick up QML changes
 ```
 
-`Model.js` parses the probe and holds the alert rules and the panel's pure logic, tested under node; `bin/server-dash` is the SSH side. Icons are [Pixelarticons](https://pixelarticons.com) (MIT), rasterised by `scripts/fetch-pixel-icons.py`. Text is set in [Monocraft](https://github.com/IdreesInc/Monocraft) (SIL OFL 1.1, license in `assets/fonts/OFL.txt`), shipped with the plugin. See [AGENTS.md](AGENTS.md) for how the pieces fit.
+`Model.js` parses the probe and holds the alert rules and the panel's pure logic, tested under node; `bin/server-dash` is the SSH side. Icons are [Pixelarticons](https://pixelarticons.com) (MIT), rasterised by `scripts/fetch-pixel-icons.py`. Text is set in [Monocraft](https://github.com/IdreesInc/Monocraft) (SIL OFL 1.1, license in `assets/fonts/OFL.txt`), shipped with the plugin with a zero-width space added and its own family name (`scripts/patch-font.py`). See [AGENTS.md](AGENTS.md) for how the pieces fit.
 
 ## License
 

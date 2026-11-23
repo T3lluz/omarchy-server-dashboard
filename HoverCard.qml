@@ -78,10 +78,23 @@ PopupWindow {
     }
   }
 
+  // The widest row with its name on one line. The card grows to fit it, up
+  // to 360, so a disk like media_library_archive_2026 keeps one line and its
+  // row the height of the others; a longer name wraps.
+  property real widest: 0
+  function measure() {
+    var m = 0
+    for (var i = 0; i < rowRepeater.count; i++) {
+      var row = rowRepeater.itemAt(i)
+      if (row) m = Math.max(m, row.wants)
+    }
+    widest = m
+  }
+
   BorderSurface {
     id: frame
     opacity: card.revealed ? 1 : 0
-    implicitWidth: Style.space(280)
+    implicitWidth: Math.min(Style.space(360), Math.max(Style.space(280), Math.ceil(card.widest) + Style.space(8) * 2))
     implicitHeight: list.implicitHeight + Style.space(8) * 2
     color: Commons.Color.tooltip.background
     borderSpec: Border.surfaceSpec("tooltip", "border", Commons.Color.tooltip.border, 1)
@@ -95,7 +108,10 @@ PopupWindow {
       spacing: Style.space(3)
 
       Repeater {
+        id: rowRepeater
         model: card.rows
+        onItemAdded: Qt.callLater(card.measure)
+        onItemRemoved: Qt.callLater(card.measure)
 
         HoverRow {
           required property var modelData
@@ -103,6 +119,7 @@ PopupWindow {
           width: list.width
           play: card.shows
           delay: 120 + index * 90
+          onWantsChanged: Qt.callLater(card.measure)
           entry: modelData
           tone: card.toneOf(modelData.tone)
           foreground: card.foreground

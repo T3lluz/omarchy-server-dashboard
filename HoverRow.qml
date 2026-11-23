@@ -20,6 +20,8 @@ Rectangle {
   property int play: 0
   property int delay: 0
   readonly property bool known: Model.hasLevel(hoverRow.entry.level)
+  // How wide the row would be with its name on one line.
+  readonly property real wants: name.implicitWidth + (width - name.width)
 
   height: Math.max(name.implicitHeight, Style.space(14)) + Style.space(6) * 2
   radius: Style.cornerRadius
@@ -45,7 +47,7 @@ Rectangle {
     anchors.verticalCenter: parent.verticalCenter
     textFormat: Text.PlainText
     wrapMode: Text.Wrap
-    text: hoverRow.entry.name
+    text: Model.breakable(hoverRow.entry.name)
     color: hoverRow.foreground
     font.family: hoverRow.fontFamily
     font.pixelSize: Style.font.bodySmall

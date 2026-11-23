@@ -96,7 +96,7 @@ Item {
       width: parent.width
       visible: value !== ""
       wrapMode: Text.Wrap
-      value: head.status
+      value: Model.breakable(head.status)
       delay: head.delay
       color: head.host.dim
       font.family: head.host.fontFamily
