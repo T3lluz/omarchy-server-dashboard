@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.t3lluz.server-dashboard",
   "name": "Server Dashboard",
-  "version": "1.6.1",
+  "version": "1.7.0",
   "author": "fredde",
   "license": "MIT",
   "homepage": "https://github.com/T3lluz/omarchy-server-dashboard",
@@ -37,7 +37,7 @@
         "key": "target",
         "type": "string",
         "label": "SSH target",
-        "description": "user@host, for example casaos@100.64.0.10. A Tailscale IP or MagicDNS name works. The password is stored in the keyring from the panel.",
+        "description": "user@host, for example user@100.64.0.10. A Tailscale IP or MagicDNS name works. The password is stored in the keyring from the panel.",
         "defaultValue": ""
       },
       {

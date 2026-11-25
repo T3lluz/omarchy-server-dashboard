@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // A room's figure in the block face (Model.bigDigits), with a small unit
@@ -28,18 +29,28 @@ Item {
   // (a full disk's "100%" in a quarter-width tile) draws its blocks smaller
   // instead. The blocks are rectangles, so they stay sharp at any size.
   property real maxWidth: 0
+  // The value it is counting up to, if any. The figure keeps room for that
+  // many digits from the start, right-aligned, so the % and the mark beside
+  // it stay put while 9 becomes 96.
+  property var reserve: null
   readonly property real markSize: Math.round(fontSize * 1.1)
 
   readonly property bool known: text !== "" ? text !== "--" : Model.hasLevel(value)
   readonly property var rows: Model.bigDigits(text !== "" ? text : known ? String(Math.round(value)) : "--")
   readonly property int cols: rows[0].length
+  readonly property int reservedCols: Model.hasLevel(reserve) && text === "" ? Model.bigDigits(String(Math.round(reserve)))[0].length : 0
+  readonly property int layoutCols: Math.max(cols, reservedCols)
   readonly property real baseCellW: grid.implicitWidth / 10
-  readonly property real fit: maxWidth > 0 && cols > 0
-    ? Math.min(1, (maxWidth - Style.space(3) - side.implicitWidth) / (cols * baseCellW)) : 1
+  readonly property real fit: maxWidth > 0 && layoutCols > 0
+    ? Math.min(1, (maxWidth - Style.space(3) - side.implicitWidth) / (layoutCols * baseCellW)) : 1
   readonly property real cellW: baseCellW * fit
   readonly property real cellH: Math.round(metrics.height * 0.9 * fit)
-  readonly property real digitsWidth: Math.round(cols * cellW)
-  readonly property color faceColor: known && !dimmed ? tone : Qt.darker(foreground, 1.5)
+  readonly property real digitsWidth: Math.round(layoutCols * cellW)
+  // Where the digits start, so they end at the reserved width's right edge.
+  readonly property int lead: layoutCols - cols
+  // Tinted toward the panel, not darkened, so it reads on a light theme too.
+  readonly property color dimInk: Qt.tint(foreground, Qt.rgba(Commons.Color.background.r, Commons.Color.background.g, Commons.Color.background.b, 0.4))
+  readonly property color faceColor: known && !dimmed ? tone : dimInk
   // Every block of every row, as [col, row, "full" | "top" | "bottom"].
   readonly property var blocks: {
     var out = []
@@ -81,9 +92,9 @@ Item {
     Rectangle {
       required property var modelData
       readonly property real from: modelData[1] * figure.cellH + (modelData[2] === "bottom" ? figure.cellH / 2 : 0)
-      x: Math.round(modelData[0] * figure.cellW)
+      x: Math.round((modelData[0] + figure.lead) * figure.cellW)
       y: Math.round(from)
-      width: Math.round((modelData[0] + 1) * figure.cellW) - x
+      width: Math.round((modelData[0] + figure.lead + 1) * figure.cellW) - x
       height: Math.round(from + (modelData[2] === "full" ? figure.cellH : figure.cellH / 2)) - y
       color: figure.faceColor
       antialiasing: false
@@ -105,7 +116,7 @@ Item {
       size: figure.markSize
       // The alert mark blinks while it stands.
       live: visible
-      color: figure.dimmed ? Qt.darker(figure.foreground, 1.5) : figure.tone
+      color: figure.dimmed ? figure.dimInk : figure.tone
     }
 
     PixelText {
@@ -115,7 +126,7 @@ Item {
       anchors.bottom: parent.bottom
       text: figure.suffix
       size: Style.font.caption * 0.75
-      color: Qt.darker(figure.foreground, 1.5)
+      color: figure.dimInk
     }
   }
 }

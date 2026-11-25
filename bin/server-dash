@@ -24,9 +24,13 @@ if [[ ${SERVER_DASH_ASKPASS:-} == 1 ]]; then
 fi
 
 ERRFILE=""
+CHILD=""
 # The shell kills a probe that outlives its widget; still clean up after it.
 trap '[[ -n $ERRFILE ]] && rm -f "$ERRFILE"' EXIT
-trap 'exit 143' TERM INT
+# Bash runs a trap only once its foreground command returns, so a TERM sent
+# while ssh hung on a wedged server would wait forever. ssh runs in the
+# background instead (see remote), and the trap ends it.
+trap '[[ -n $CHILD ]] && kill "$CHILD" 2>/dev/null; exit 143' TERM INT
 
 fail() {
   printf '@@ERROR\n%s\n%s\n' "$1" "$2"
@@ -64,7 +68,7 @@ askpass_path() {
 setup() {
   TARGET=$1
   PORT=${2:-22}
-  valid_target "$TARGET" || fail config "Use the form user@host, for example casaos@100.64.0.10"
+  valid_target "$TARGET" || fail config "Use the form user@host, for example user@100.64.0.10"
   valid_port "$PORT" || fail config "Port must be a number between 1 and 65535"
   HOST=${TARGET#*@}
 
@@ -179,14 +183,26 @@ ensure_master() {
   rm -f "$authfail"
 }
 
+# One command on the server over the master. In the background with `wait`,
+# which a trap can interrupt; `<&0` keeps the caller's stdin, which bash would
+# otherwise swap for /dev/null in a background job.
 remote() {
-  ssh "${SSH_OPTS[@]}" -o ControlMaster=no "$TARGET" "$@"
+  ssh "${SSH_OPTS[@]}" -o ControlMaster=no "$TARGET" "$@" <&0 &
+  CHILD=$!
+  wait "$CHILD"
+  local rc=$?
+  CHILD=""
+  return "$rc"
 }
 
 probe() {
   setup "$@"
   ensure_master
+  # What can hang on the server (a stale mount under df, a wedged dockerd,
+  # systemd or ps stuck on a process in D state) gets five seconds, so one
+  # bad part costs its section, not the whole reading.
   remote 'sh -s' <<'PROBE'
+t() { if command -v timeout >/dev/null 2>&1; then timeout 5 "$@"; else "$@"; fi; }
 echo @@TS; date +%s
 echo @@HOST; hostname 2>/dev/null || cat /etc/hostname 2>/dev/null
 echo @@USER; id -un 2>/dev/null
@@ -198,13 +214,13 @@ echo @@MEM; grep -E '^(MemTotal|MemAvailable|MemFree|Buffers|Cached|SwapTotal|Sw
 echo @@LOAD; cat /proc/loadavg 2>/dev/null
 echo @@UP; cat /proc/uptime 2>/dev/null
 echo @@NET; cat /proc/net/dev 2>/dev/null
-echo @@DF; df -P -k 2>/dev/null
+echo @@DF; t df -P -k 2>/dev/null
 echo @@HWMON; grep -H . /sys/class/hwmon/hwmon*/name /sys/class/hwmon/hwmon*/temp1_input 2>/dev/null
 echo @@THERMAL; grep -H . /sys/class/thermal/thermal_zone*/type /sys/class/thermal/thermal_zone*/temp 2>/dev/null
-echo @@PROC; ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null | head -n 9
+echo @@PROC; t ps -eo pid,pcpu,pmem,rss,comm --sort=-pcpu 2>/dev/null | head -n 9
 echo @@HASDOCKER; command -v docker 2>/dev/null
-echo @@DOCKER; { docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null || sudo -n docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null; } | head -n 40
-echo @@UNITS; systemctl list-units --state=failed --no-legend --plain --no-pager 2>/dev/null | head -n 12
+echo @@DOCKER; { t docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null || t sudo -n docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}|{{.Image}}' 2>/dev/null; } | head -n 40
+echo @@UNITS; t systemctl list-units --state=failed --no-legend --plain --no-pager 2>/dev/null | head -n 12
 echo @@REBOOT; test -f /var/run/reboot-required && echo yes
 echo @@END
 PROBE
@@ -213,7 +229,18 @@ PROBE
   exit 0
 }
 
+# Reboot or shut down. as_root has already failed if sudo said no; a session
+# the server drops as it goes is success.
+going_down() {
+  as_root "$1"
+  ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
+  exit 0
+}
+
 # Runs a privileged command, feeding sudo the saved password when there is one.
+# 0 is done. 255 is the session dropping, which a reboot does on its way down.
+# Anything else ends the script with what went wrong, in words the panel can
+# show: the panel must never report a refused reboot as rebooting.
 as_root() {
   local cmd=$1
   local sudo="sudo -n"
@@ -221,11 +248,26 @@ as_root() {
   pw=$(lookup_password "$TARGET")
   [[ -n $pw ]] && sudo="sudo -S -p ''"
   local wrapped="if [ \"\$(id -u)\" -eq 0 ]; then $cmd; else $sudo $cmd; fi"
+  ERRFILE=$(mktemp "$RUNTIME_DIR/server-dash-err.XXXXXX")
   if [[ -n $pw ]]; then
-    printf '%s\n' "$pw" | remote "$wrapped"
+    printf '%s\n' "$pw" | remote "$wrapped" 2>"$ERRFILE"
   else
-    remote "$wrapped" </dev/null
+    remote "$wrapped" </dev/null 2>"$ERRFILE"
   fi
+  local rc=$?
+  local err
+  err=$(grep -v '^\s*$' "$ERRFILE" | tail -n 1)
+  rm -f "$ERRFILE"
+  ERRFILE=""
+  (( rc == 0 || rc == 255 )) && return 0
+  case "$err" in
+    *"password is required"*|*"no tty present"*|*"terminal is required"*)
+      [[ -z $pw ]] && fail sudo "sudo needs a password; save one in Settings"
+      fail sudo "sudo refused the saved password" ;;
+    *"incorrect password"*|*"Sorry, try again"*)
+      fail sudo "sudo refused the saved password" ;;
+  esac
+  fail action "${err:-The server answered with exit code $rc}"
 }
 
 action() {
@@ -243,18 +285,12 @@ action() {
       ;;
     unit-restart)
       [[ $arg =~ ^[A-Za-z0-9@_.:\\-]+$ ]] || fail config "Invalid unit name"
-      as_root "systemctl restart $arg"
+      # Quoted for the remote shell, and after -- so a name starting with a
+      # dash is not read as an option.
+      as_root "systemctl restart -- $(printf %q "$arg")"
       ;;
-    reboot)
-      as_root "systemctl reboot"
-      # The server drops the session as it goes down.
-      ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
-      exit 0
-      ;;
-    poweroff)
-      as_root "systemctl poweroff"
-      ssh "${SSH_OPTS[@]}" -O exit "$TARGET" >/dev/null 2>&1
-      exit 0
+    reboot|poweroff)
+      going_down "systemctl $kind"
       ;;
     *)
       fail config "Unknown action: $kind"
@@ -264,7 +300,7 @@ action() {
 
 save_password() {
   local target=$1
-  valid_target "$target" || fail config "Use the form user@host, for example casaos@100.64.0.10"
+  valid_target "$target" || fail config "Use the form user@host, for example user@100.64.0.10"
   [[ -n ${SERVER_DASH_PASSWORD:-} ]] || fail config "Password is empty"
   printf '%s' "$SERVER_DASH_PASSWORD" |
     secret-tool store --label="Server Dashboard ($target)" service "$SERVICE" target "$target" ||

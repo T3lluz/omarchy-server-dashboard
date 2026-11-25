@@ -17,6 +17,15 @@ jobs:
           node-version: '22'
       - name: Manifest is valid
         run: python3 -c "import json; m = json.load(open('manifest.json')); assert m['id'] and m['version'] and m['entryPoints']"
+      - name: README badge matches the manifest
+        run: |
+          python3 - <<'PY'
+          import json, re
+          version = json.load(open("manifest.json"))["version"]
+          badge = re.search(r"badge/v([0-9][^-]*)-", open("README.md").read())
+          assert badge, "README has no version badge"
+          assert badge.group(1) == version, "README badge says %s, manifest.json %s" % (badge.group(1), version)
+          PY
       - name: Model tests
         run: |
           node tests/model.test.js

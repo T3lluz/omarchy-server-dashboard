@@ -42,14 +42,16 @@ Room {
     live: tile.running
   }
 
-  Text {
+  MonoText {
+    // Small, in the text colour: "Shut down" in body ran out of a quarter
+    // tile at 1.25 and broke inside the word.
+    step: "small"
+    fontFamily: tile.host.fontFamily
     width: parent.width
     horizontalAlignment: Text.AlignHCenter
     textFormat: Text.PlainText
     wrapMode: Text.Wrap
     text: tile.action ? tile.action.text : ""
     color: tile.host.fg
-    font.family: tile.host.fontFamily
-    font.pixelSize: Style.font.bodySmall
   }
 }

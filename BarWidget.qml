@@ -3,6 +3,7 @@ import QtQuick.Window
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
@@ -30,14 +31,13 @@ BarWidget {
   }
   readonly property bool showsMetrics: barStats.length > 0 && !vertical
 
-  // The plugin's text face: Monocraft (OFL), shipped in assets/fonts so it
-  // needs no system install. Both files register as one family, so a bold
-  // label gets the real bold cut instead of a smeared synthetic one. Until
-  // the files load, and if they ever fail to, text keeps the shell's font.
-  // The pixel type, the block digits and the icons are drawn, not typed,
-  // and do not use it.
+  // The plugin's text face: Monocraft (OFL), patched by the kit's
+  // scripts/patch-font.py and shipped in assets/fonts so it needs no system
+  // install. MonoText draws it on whole device pixels, never bold, so only
+  // the regular cut is loaded. Until it loads, and if it ever fails to, text
+  // keeps the shell's font. The pixel type, the block digits and the icons
+  // are drawn, not typed, and do not use it.
   FontLoader { id: monocraft; source: Qt.resolvedUrl("assets/fonts/Monocraft.ttf") }
-  FontLoader { id: monocraftBold; source: Qt.resolvedUrl("assets/fonts/Monocraft-Bold.ttf") }
   readonly property string textFont: monocraft.status === FontLoader.Ready ? monocraft.name : Style.font.family
 
   property var leader: root
@@ -48,15 +48,18 @@ BarWidget {
   readonly property string displayName: String(setting("displayName", "")).trim()
     || (client ? client.hostLabel : "") || "Server"
   readonly property bool online: !!client && client.online && !!client.snapshot
-  readonly property color barFg: bar ? bar.barForeground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color dim: Qt.darker(barFg, 1.55)
+  readonly property color barFg: bar ? bar.barForeground : Commons.Color.foreground
+  readonly property color urgent: bar ? bar.urgent : Commons.Color.urgent
+  // Tinted toward the bar, not darkened, so a light theme's bar keeps it.
+  readonly property color barBg: bar ? bar.background : Commons.Color.bar.background
+  readonly property color dim: Qt.tint(barFg, Qt.rgba(barBg.r, barBg.g, barBg.b, 0.4))
   // Everything on whole device pixels, never scaled. Figures in the pixel
   // type stand as tall as the bar's own digits. Icons take the largest sharp
   // size that is not bigger than the shell's own (its icon size, with pixel
   // art's two units clear around the 24): twelve device pixels on a 1.25
   // scale, twenty-four on a 2.
-  readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+  // The window's ratio, not Screen's: on a 1.25 monitor Screen.devicePixelRatio says 2.
+  readonly property real dpr: Window.window && Window.window.devicePixelRatio > 0 ? Window.window.devicePixelRatio : 1
   readonly property int pixelUnit: Math.max(1, Math.round(button.fontSize * 0.72 * dpr / 5))
   readonly property int iconUnit: Math.max(1, Math.floor(Style.bar.iconSize * 24 / 20 * dpr / 12))
 
@@ -309,7 +312,7 @@ BarWidget {
           unit: root.iconUnit
           working: root.mark.working
           color: root.toneColor(root.mark.tone)
-          dimColor: root.mark.tone === "dim" ? Qt.darker(root.barFg, 2.2) : root.dim
+          dimColor: root.mark.tone === "dim" ? Qt.tint(root.barFg, Qt.rgba(root.barBg.r, root.barBg.g, root.barBg.b, 0.6)) : root.dim
         }
 
         // The alert: it blinks as it comes up, then once a round while it

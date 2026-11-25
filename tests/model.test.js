@@ -4,7 +4,7 @@ const path = require("path")
 const assert = require("assert")
 
 const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8").replace(/^\.pragma library\s*/, "")
-const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, roomTone, roomPixel, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, scramble, breakable, keepUnits, barItems, barMark, hoverRows, hoverNote }")()
+const Model = new Function(source + "\nreturn { sections, parseError, parseProbe, withRates, parsePeers, percent, bytes, rate, uptime, temperature, level, targetHost, targetUser, validTarget, containerStatus, sizeOf, size, speed, uptimeLong, heroLines, problemCount, needsAttention, temperatureLevel, systemCells, systemStatus, networkFacts, networkRates, networkStatus, rateParts, rateText, machineFacts, systemFacts, disks, diskFacts, containerCounts, containerNote, containerFacts, containerTrouble, containerPixel, processesStatus, runningHot, parseDf, parseNetDev, parseCpuTemp, alerts, alertLines, newAlerts, ROOM_TONES, ROOM_PIXELS, roomTone, roomPixel, GLYPHS, PIXEL_GLYPHS, pixelFor, UI_PIXELS, serverMark, markGrid, markLights, workingLights, parsePalette, contrast, roomToneHex, bigDigits, PIXEL_FONT, pixelText, drawable, meterCells, revealLine, scramble, breakable, keepUnits, naturalCompare, heat, cpuHot, barItems, barMark, hoverRows, hoverNote }")()
 const pixelSource = fs.readFileSync(path.join(__dirname, "..", "Pixels.js"), "utf8").replace(/^\.pragma library\s*/, "")
 const Pixels = new Function(pixelSource + "\nreturn { icons }")()
 
@@ -112,6 +112,7 @@ assert.strictEqual(Model.percent(42.6), "43%")
 assert.strictEqual(Model.percent(null), "—")
 assert.strictEqual(Model.bytes(1536), "1.5K")
 assert.strictEqual(Model.bytes(500 * 1024 * 1024 * 1024), "500G")
+assert.strictEqual(Model.bytes(1010 * 1024), "1M", "never four digits")
 assert.strictEqual(Model.rate(2 * 1024 * 1024), "2M/s")
 assert.strictEqual(Model.uptime(273600), "3d 4h")
 assert.strictEqual(Model.uptime(3900), "1h 5m")
@@ -156,6 +157,15 @@ assert.deepStrictEqual(Model.parseProbe(sample(1, 1000, 0).replace("@@PROC\n", "
   assert.strictEqual(Model.rateText(Model.rateParts(5.5 * 1024), 0.5), "2.8", "counts up in the unit it ends in")
   assert.strictEqual(Model.rateText(Model.rateParts(9.97 * 1024)), "10", "never 10.0")
   assert.strictEqual(Model.rateParts(300).unit, "B/s")
+  // 1000 to 1023 of a unit go up one: never four digits, which squeezed the
+  // tile's pixel type to one device pixel a cell.
+  for (const v of [1000, 1010, 1023]) {
+    const parts = Model.rateParts(v * 1024)
+    assert.strictEqual(parts.unit, "M/s", v + "K")
+    assert.ok(Model.rateText(parts).length <= 3, v + "K stays short")
+  }
+  assert.strictEqual(Model.rateParts(999 * 1024).unit, "K/s")
+  assert.strictEqual(Model.rateParts(1000).unit, "K/s")
   assert.strictEqual(Model.rateParts(2.5 * 1024 ** 3).unit, "G/s")
   assert.deepStrictEqual(Model.networkFacts(b), [{ label: "Received", value: "5.7 MB" }, { label: "Sent", value: "4.9 KB" }, { label: "Interfaces", value: "eno1" }])
   assert.deepStrictEqual(Model.networkFacts(null), [])
@@ -189,8 +199,8 @@ assert.deepStrictEqual(Model.parseProbe(sample(1, 1000, 0).replace("@@PROC\n", "
   assert.strictEqual(cells[1].suffix, "%")
   assert.strictEqual(cells[2].suffix, "\u00B0C")
   assert.strictEqual(cells[2].state, "Normal")
-  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90 }))[2].state, "Hot")
-  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90 }))[2].hot, true)
+  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90, heat: null }))[2].state, "Hot")
+  assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: 90, heat: null }))[2].hot, true)
   assert.strictEqual(Model.systemCells(Object.assign({}, c, { cpuTemp: null })).length, 2)
   assert.strictEqual(Model.systemCells(a)[0].value, null, "no CPU share before the second poll")
   assert.deepStrictEqual(Model.systemCells(null), [])
@@ -223,7 +233,7 @@ assert.deepStrictEqual(Model.parseProbe(sample(1, 1000, 0).replace("@@PROC\n", "
 
 // The prompt line: what is going on, then facts to rotate through.
 {
-  const calm = Object.assign({}, c, { rebootRequired: false, failedUnits: [], containers: [], disks: [], cpuPercent: 10, memory: Object.assign({}, c.memory, { percent: 10 }) })
+  const calm = Object.assign({}, c, { heat: null, rebootRequired: false, failedUnits: [], containers: [], disks: [], cpuPercent: 10, memory: Object.assign({}, c.memory, { percent: 10 }) })
   const state = extra => Object.assign({ configured: true, online: true, snapshot: calm, status: "online", errorKind: "", busyAction: "" }, extra)
   assert.deepStrictEqual(Model.heroLines(state({ configured: false })), ["Connect a server over SSH"])
   assert.strictEqual(Model.heroLines(state())[0], "All clear")
@@ -311,6 +321,24 @@ for (const f of process.argv.slice(2)) {
   }
 }
 
+// Every Nerd Font glyph typed anywhere in the plugin has a pixel icon, so no
+// typed glyph stands among the pixel art. The kit types two itself, outside
+// Glyph.qml: UpdateSection's "Check now" and Notice's dismiss cross (as in
+// ROG Deck); those wait on the kit.
+{
+  const root = path.join(__dirname, "..")
+  const kitTyped = { "UpdateSection.qml": null, "Notice.qml": [0xF0156] }
+  const files = fs.readdirSync(root).filter(f => /\.(qml|js)$/.test(f) && kitTyped[f] !== null)
+  for (const file of files) {
+    for (const ch of fs.readFileSync(path.join(root, file), "utf8")) {
+      const cp = ch.codePointAt(0)
+      if ((kitTyped[file] || []).includes(cp)) continue
+      if ((cp >= 0xE000 && cp <= 0xF8FF) || (cp >= 0xF0000 && cp <= 0xFFFFD))
+        assert.ok(Model.pixelFor(ch), "U+" + cp.toString(16).toUpperCase() + " in " + file + " has a pixel icon")
+    }
+  }
+}
+
 // Every glyph the panel hands the kit has a pixel icon.
 {
   for (const k in Model.GLYPHS) assert.ok(Model.pixelFor(Model.GLYPHS[k]) !== "", k + " maps to a pixel icon")
@@ -388,6 +416,46 @@ for (const f of process.argv.slice(2)) {
   assert.strictEqual(Model.keepUnits("Created"), "Created")
 }
 
+// Names sort as counted: svc_2 before svc_10.
+{
+  const names = ["svc_10", "svc_2", "Svc_1", "alpha", "svc_2b"]
+  assert.deepStrictEqual(names.slice().sort(Model.naturalCompare), ["alpha", "Svc_1", "svc_2", "svc_2b", "svc_10"])
+  const lines = ["svc_10|running|Up|x", "svc_2|running|Up|x", "svc_9|exited|Exited (0) 1 day ago|x"]
+  const probe = "@@TS\n1\n@@DOCKER\n" + lines.join("\n") + "\n@@END\n"
+  assert.deepStrictEqual(Model.parseProbe(probe).containers.map(c => c.name), ["svc_2", "svc_10", "svc_9"])
+}
+
+// Hot holds until a reading is well under its line: no flicker at 89/90.
+{
+  const snap = (cpu, mem, temp, disk) => ({ cpuPercent: cpu, memory: { percent: mem }, cpuTemp: temp, disks: [{ mount: "/", percent: disk }] })
+  let h = Model.heat(snap(91, 50, 50, 50), null)
+  assert.strictEqual(h.cpu, true)
+  h = Model.heat(snap(88, 50, 50, 50), h)
+  assert.strictEqual(h.cpu, true, "88 after 91 stays hot")
+  h = Model.heat(snap(84, 50, 50, 50), h)
+  assert.strictEqual(h.cpu, false, "84 cools")
+  h = Model.heat(snap(88, 50, 50, 50), h)
+  assert.strictEqual(h.cpu, false, "88 from cool is not hot")
+  // Temperature: warm at 70, hot at 85, down a step 5 under each.
+  let t = Model.heat(snap(10, 10, 86, 10), null)
+  assert.strictEqual(t.temp, 2)
+  t = Model.heat(snap(10, 10, 81, 10), t); assert.strictEqual(t.temp, 2, "81 after 86 stays hot")
+  t = Model.heat(snap(10, 10, 79, 10), t); assert.strictEqual(t.temp, 1, "79 is warm")
+  t = Model.heat(snap(10, 10, 66, 10), t); assert.strictEqual(t.temp, 1, "66 after warm stays warm")
+  t = Model.heat(snap(10, 10, 64, 10), t); assert.strictEqual(t.temp, 0)
+  t = Model.heat(snap(10, 10, 90, 10), t); assert.strictEqual(t.temp, 2, "climbs at once")
+  // Disks and memory the same way.
+  let d = Model.heat(snap(10, 93, 10, 91), null)
+  assert.ok(d.memory && d.disks["/"])
+  d = Model.heat(snap(10, 89, 10, 87), d)
+  assert.ok(d.memory && d.disks["/"], "held")
+  // A poll carries it: withRates hands the last heat on.
+  const a = Model.withRates(Model.parseProbe(sample(100, 10000, 1000000)), null, 0)
+  assert.ok(a.heat && typeof a.heat.cpu === "boolean")
+  const cells = Model.systemCells(Object.assign({}, snap(88, 50, 50, 50), { load: { one: 1 }, memory: { percent: 50, usedBytes: 1, totalBytes: 2 }, heat: { cpu: true, memory: false, temp: 0, disks: {} } }))
+  assert.strictEqual(cells[0].hot, true, "cells read the heat")
+}
+
 // The block face, the pixel type and every string the bar writes.
 {
   assert.deepStrictEqual(Model.bigDigits("1"), ["\u2580\u2588 ", " \u2588 ", "\u2580\u2580\u2580"])
@@ -424,7 +492,7 @@ for (const f of process.argv.slice(2)) {
   assert.strictEqual(items[3].text, "977K")
   assert.deepStrictEqual(Model.barItems(null, ["cpu"]), [])
   assert.strictEqual(Model.barItems(Model.parseProbe(sample(100, 10000, 1000000)), ["cpu"])[0].text, "--")
-  assert.strictEqual(Model.barItems(Object.assign({}, c, { cpuPercent: 95 }), ["cpu"])[0].hot, true)
+  assert.strictEqual(Model.barItems(Object.assign({}, c, { cpuPercent: 95, heat: null }), ["cpu"])[0].hot, true)
   const mark = extra => Model.barMark(Object.assign({ configured: true, online: true, status: "online", needsUser: false, alertCount: 0, working: false }, extra))
   assert.deepStrictEqual(mark({}), { icon: "server", tone: "", working: false })
   assert.strictEqual(mark({ alertCount: 2 }).icon, "warning-diamond", "an alert is a mark, not colour alone")
@@ -441,7 +509,7 @@ for (const f of process.argv.slice(2)) {
   assert.deepStrictEqual(rows.map(r => r.key), ["cpu", "memory", "temp", "disk:/", "disk:/DATA", "containers"])
   assert.strictEqual(rows[3].name, "Root disk")
   assert.strictEqual(rows[5].text, "2")
-  const hot = Model.hoverRows(Object.assign({}, c, { cpuPercent: 99 }))[0]
+  const hot = Model.hoverRows(Object.assign({}, c, { cpuPercent: 99, heat: null }))[0]
   assert.strictEqual(hot.tone, "low")
   assert.strictEqual(hot.mark, "warning-diamond")
   assert.deepStrictEqual(Model.hoverRows(null), [])
@@ -453,7 +521,7 @@ for (const f of process.argv.slice(2)) {
 
 // The prompt lays out the whole line from the first character.
 {
-  assert.strictEqual(Model.revealLine("All clear", 9, true), "All clear\u258C")
+  assert.strictEqual(Model.revealLine("All clear", 9, true), "All clear_")
   assert.ok(Model.revealLine("All clear", 3, true).startsWith("All "))
   assert.ok(Model.revealLine("All clear", 3, true).includes('<font color="#00000000">'))
   assert.ok(Model.revealLine("a<b", 0, true).includes("&lt;"), "markup in a line is escaped")

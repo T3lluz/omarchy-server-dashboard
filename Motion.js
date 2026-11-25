@@ -270,6 +270,52 @@ function phase(now, period) {
   return period > 0 ? (now % LOOP_MS) % period : 0
 }
 
+// When a loop moves, as [from, to) ms spans of its round, found by sampling
+// its poses: the parts of a round where some pose is not at rest. Kept per
+// icon, since a loop's poses never change.
+var MOVES = {}
+function moves(name) {
+  if (MOVES[name]) return MOVES[name]
+  var m = MOTIONS[name]
+  var out = []
+  if (m && m.loop > 0) {
+    var still = function(p) {
+      for (var id in p) {
+        if (id === "rot") { if (p.rot % 4 !== 0) return false; continue }
+        var q = p[id]
+        var hidden = !!m.hidden && m.hidden.indexOf(id) !== -1
+        if ((q.x || 0) !== 0 || (q.y || 0) !== 0) return false
+        if (q.a !== undefined && q.a !== (hidden ? 0 : 1)) return false
+        if (q.clip !== undefined && q.clip < 12) return false
+      }
+      return true
+    }
+    var from = -1
+    for (var t = 0; t < m.loop; t += 10) {
+      var moving = !still(m.pose("loop", t / m.loop))
+      if (moving && from < 0) from = t
+      if (!moving && from >= 0) { out.push([from, t]); from = -1 }
+    }
+    if (from >= 0) out.push([from, m.loop])
+  }
+  MOVES[name] = out
+  return out
+}
+
+// How long a loop at `ph` ms into its round stays still: 0 while it moves,
+// else the ms until it next does (round the top if need be). An icon sleeps
+// that long instead of waking thirty times a second to draw the same frame.
+function untilMove(name, ph) {
+  var m = MOTIONS[name]
+  var spans = moves(name)
+  if (!m || spans.length === 0) return m && m.loop > 0 ? m.loop - ph : 0
+  for (var i = 0; i < spans.length; i++) {
+    if (ph >= spans[i][0] && ph < spans[i][1]) return 0
+    if (ph < spans[i][0]) return spans[i][0] - ph
+  }
+  return m.loop - ph + spans[0][0]
+}
+
 function partPose(m, poses, id) {
   var p = poses[id]
   var hidden = !!m.hidden && m.hidden.indexOf(id) !== -1

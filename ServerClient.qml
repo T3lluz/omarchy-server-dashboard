@@ -71,6 +71,8 @@ Item {
     if (!configured || _holdPolling) return
     if (probeProc.running) return
     probeProc.command = ["bash", scriptPath, "probe", target, String(port)]
+    probeAbandoned = false
+    probeWatchdog.killing = false
     probeProc.running = true
     probeWatchdog.restart()
   }
@@ -82,6 +84,20 @@ Item {
   // Two failed polls in a row before calling the server down, so one dropped
   // packet on the tailnet stays quiet. Ones that need the user (a password,
   // a changed host key) are shown in the panel, not announced.
+  // Set when the watchdog failed a probe, so its late exit is not counted
+  // as a second failure.
+  property bool probeAbandoned: false
+
+  function probeTimedOut() {
+    probeAbandoned = true
+    if (_holdPolling) return
+    errorKind = "unreachable"
+    errorText = "No answer from " + serverName() + " in 25 seconds"
+    status = "error"
+    previousSnapshot = null
+    noteFailure()
+  }
+
   function noteFailure() {
     failedPolls += 1
     if (failedPolls < 2 || announcedDown || lastAlerts === null || needsUser) return
@@ -338,6 +354,8 @@ Item {
 
   function handleProbe(exitCode, out, err) {
     probeWatchdog.stop()
+    probeWatchdog.killing = false
+    if (probeAbandoned) { probeAbandoned = false; return }
     if (_holdPolling) return
 
     var failure = Model.parseError(out)
@@ -378,10 +396,26 @@ Item {
     onTriggered: root.pollNow()
   }
 
+  // A probe that has not answered in 25 s ends as a failed reading at once,
+  // so the panel never shows the last one as live. bin/server-dash ends on
+  // TERM; one that still has not after 5 s more is killed, since a probe
+  // left running would hold every later poll back.
   Timer {
     id: probeWatchdog
-    interval: 25000
-    onTriggered: if (probeProc.running) probeProc.running = false
+    property bool killing: false
+    interval: killing ? 5000 : 25000
+    onTriggered: {
+      if (!probeProc.running) { killing = false; return }
+      if (killing) {
+        probeProc.signal(9)
+        killing = false
+        return
+      }
+      root.probeTimedOut()
+      killing = true
+      probeProc.running = false
+      restart()
+    }
   }
 
   Process {

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // The Server Dashboard mark (Model.serverMark), after the app icon: two
@@ -15,7 +16,7 @@ Item {
   // Device pixels per cell, as PixelIcon.unit; 0 picks it from `size`.
   property int unit: 0
   property color color: "white"
-  property color dimColor: Qt.darker(color, 1.6)
+  property color dimColor: Qt.tint(color, Qt.rgba(Commons.Color.background.r, Commons.Color.background.g, Commons.Color.background.b, 0.45))
   property color lightColor: color
   property bool animated: false
   property bool working: false

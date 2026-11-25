@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // One line of the bar's hover card: a room tinted in its colour, as in the
@@ -38,8 +39,10 @@ Rectangle {
     delay: hoverRow.delay
   }
 
-  Text {
+  MonoText {
     id: name
+    step: "body"
+    fontFamily: hoverRow.fontFamily
     anchors.left: icon.right
     anchors.leftMargin: Style.space(6)
     anchors.right: markSlot.left
@@ -49,8 +52,6 @@ Rectangle {
     wrapMode: Text.Wrap
     text: Model.breakable(hoverRow.entry.name)
     color: hoverRow.foreground
-    font.family: hoverRow.fontFamily
-    font.pixelSize: Style.font.bodySmall
   }
 
   // The mark (running hot, a container in trouble) in a column of its
@@ -141,7 +142,7 @@ Rectangle {
       anchors.right: parent.right
       text: hoverRow.entry.text || "--"
       unit: hoverRow.unit
-      color: hoverRow.known ? hoverRow.foreground : Qt.darker(hoverRow.foreground, 1.5)
+      color: hoverRow.known ? hoverRow.foreground : Qt.tint(hoverRow.foreground, Qt.rgba(Commons.Color.tooltip.background.r, Commons.Color.tooltip.background.g, Commons.Color.tooltip.background.b, 0.4))
     }
   }
 }

@@ -30,7 +30,10 @@ Panel {
 
   readonly property color fg: bar ? bar.foreground : Commons.Color.foreground
   readonly property color accent: Commons.Color.accent
-  readonly property color dim: Qt.darker(fg, 1.5)
+  // Dim text is the text colour tinted toward the panel's surface, never
+  // darkened: on a light theme a darker grey of dark text vanished into it.
+  readonly property color surface: Commons.Color.background
+  readonly property color dim: Qt.tint(fg, Qt.rgba(surface.r, surface.g, surface.b, 0.4))
   // The theme's alert colour, where it reads; a monochrome theme's is a quiet
   // grey, and a problem must not look calmer than the readings around it, so
   // there it is the text colour. Every alert also carries a mark.
@@ -152,7 +155,7 @@ Panel {
   // does, at once.
   property int lineIndex: 0
   readonly property var heroLines: setupOpen && configured
-    ? ["Saved as you change them"]
+    ? ["Changes save as you make them"]
     : Model.heroLines({
         configured: configured,
         online: online,
@@ -179,7 +182,7 @@ Panel {
     { key: "ssh", text: "SSH", hint: "Open a shell (t)" },
     { key: "btop", text: "Monitor", hint: "Open btop on the server (b)" },
     { key: "reboot", text: "Reboot", hint: "Reboot, asks first" },
-    { key: "poweroff", text: "Shutdown", hint: "Shut down, asks first" }
+    { key: "poweroff", text: "Shut down", hint: "Shut down, asks first" }
   ]
 
   // What the bar can show beside the mark. `room` is where the same switch
@@ -337,12 +340,22 @@ Panel {
   function confirmMessage() {
     if (confirmKind === "reboot") return "Reboot " + displayName + "? Everything on it is down until it comes back."
     if (confirmKind === "poweroff") return "Shut down " + displayName + "? Turning it back on takes physical access."
+    if (confirmKind === "forget") return "Forget the saved password for " + (client ? client.target : "this server") + "? Connecting will ask for it again."
     return ""
   }
 
   function resolveConfirm(accepted) {
     var kind = confirmKind
     confirmKind = ""
+    if (kind === "forget") {
+      if (accepted && client) {
+        client.forget()
+        passwordField.forceActiveFocus()
+      } else {
+        keyCatcher.forceActiveFocus()
+      }
+      return
+    }
     keyCatcher.forceActiveFocus()
     if (!accepted || !client) return
     client.runAction(kind, "", kind === "reboot" ? "Rebooting " + displayName : "Shutting down " + displayName)
@@ -352,7 +365,7 @@ Panel {
     var target = targetField.text.trim()
     var port = Number(portField.text) || 22
     if (!Model.validTarget(target)) {
-      formError.text = "Use the form user@host, for example casaos@100.64.0.10"
+      formError.text = "Use the form user@host, for example user@100.64.0.10"
       return
     }
     if (port < 1 || port > 65535) {
@@ -524,13 +537,15 @@ Panel {
           id: hero
           width: parent.width
           host: root
-          markSize: Math.round(Style.font.display * 1.5)
+          // About the display size, as Sonus's: half again as big made the
+          // title room the tallest room in the panel.
+          markSize: Style.font.display
           title: root.setupOpen && root.configured ? "Settings" : root.displayName
           line: root.heroLine
           instant: root.heroHint !== ""
           working: root.serverWorking
           lightColor: root.heroUrgent ? root.lowTone : root.fg
-          lineColor: root.heroUrgent ? root.lowTone : Qt.darker(root.fg, 1.3)
+          lineColor: root.heroUrgent ? root.lowTone : Qt.tint(root.fg, Qt.rgba(root.surface.r, root.surface.g, root.surface.b, 0.25))
 
           PixelButton {
             visible: root.configured && !root.setupOpen
@@ -549,7 +564,7 @@ Panel {
             // The gear turns in eighths, the arrow nudges in, in whole steps.
             angle: root.setupOpen ? 0 : Math.round(root.gearTurn * -2) * 45
             nudge: root.setupOpen ? Math.round(root.gearTurn * 2) : 0
-            tooltipText: root.setupOpen ? "Back (c)" : "Bar, alerts and connection (c)"
+            tooltipText: root.setupOpen ? "Back (esc)" : "Bar, alerts and connection (,)"
             foreground: root.fg
             fontFamily: root.fontFamily
             onClicked: root.setupOpen = !root.setupOpen
@@ -721,7 +736,16 @@ Panel {
               SectionHeader {
                 icon: Model.GLYPHS.link
                 title: root.configured ? "CONNECTION" : "CONNECT A SERVER"
-                detail: root.configured ? Model.targetHost(root.client.target).toUpperCase() : ""
+                foreground: root.fg
+                fontFamily: root.fontFamily
+              }
+
+              // The host under the header rather than in its detail, which cut
+              // a long name short; a Caption breaks it instead.
+              Caption {
+                visible: root.configured
+                width: parent.width
+                text: root.client ? Model.breakable(root.client.target + (root.client.port !== 22 ? ":" + root.client.port : "")) : ""
                 foreground: root.fg
                 fontFamily: root.fontFamily
               }
@@ -839,10 +863,9 @@ Panel {
                   fontSize: Style.font.bodySmall
                   foreground: root.fg
                   fontFamily: root.fontFamily
-                  onClicked: {
-                    root.client.forget()
-                    passwordField.forceActiveFocus()
-                  }
+                  // Deleting a password takes a second click: it cannot be undone
+                  // from here, and the next connect needs it typed again.
+                  onClicked: root.askConfirm("forget")
                 }
               }
             }
@@ -924,7 +947,7 @@ Panel {
           anchors.fill: parent
           opened: root.confirmKind !== ""
           message: root.confirmMessage()
-          confirmText: root.confirmKind === "poweroff" ? "Shut down" : "Reboot"
+          confirmText: root.confirmKind === "poweroff" ? "Shut down" : root.confirmKind === "forget" ? "Forget" : "Reboot"
           foreground: root.fg
           selectedText: root.lowTone
           fontFamily: root.fontFamily

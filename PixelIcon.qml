@@ -34,7 +34,8 @@ Item {
   property bool playOnShow: false
 
   readonly property var art: custom || Pixels.icons[name] || null
-  readonly property real dpr: Screen.devicePixelRatio > 0 ? Screen.devicePixelRatio : 1
+  // The window's ratio, not Screen's: on a 1.25 monitor Screen.devicePixelRatio says 2.
+  readonly property real dpr: Window.window && Window.window.devicePixelRatio > 0 ? Window.window.devicePixelRatio : 1
   // Device pixels across, in twelfths: odd counts take the halved grid. Its
   // strokes are this many device pixels thick either way.
   readonly property int twelfths: unit > 0 ? unit : Math.max(1, Math.round(size * dpr / 12))
@@ -77,32 +78,42 @@ Item {
   }
   Component.onCompleted: {
     redraw()
+    Qt.callLater(icon.snap)
     if (shown && playOnShow) start()
   }
 
   function start() {
     if (!moves || Motion.playMs(name) <= 0) return
+    // A play already under way finishes; starting it over looks like a stutter.
+    if (playAt > 0 && kind === "play") return
     playAt = Date.now() + Style.duration(delay)
     wake()
   }
   onNameChanged: { kind = "rest"; at = 0; looping = false }
 
   function wake() {
-    if (moves && shown) ticker.start()
+    if (!moves || !shown) return
+    ticker.interval = Motion.TICK_MS
+    ticker.restart()
+  }
+
+  // The ticker's next wait: a frame's worth while something moves, longer
+  // while all that is left is a loop at rest. An alert that blinks once in
+  // three seconds sleeps between blinks instead of waking thirty times a
+  // second on every monitor.
+  function sleepFor(ms) {
+    ticker.interval = Math.max(Motion.TICK_MS, Math.round(ms))
   }
 
   // One step of the motion: a play first, then the loop, else rest.
   function step() {
     var now = Date.now()
     if (!moves || !shown) { kind = "rest"; at = 0; playAt = 0; looping = false; ticker.stop(); return }
-    if (playAt > 0 && now >= playAt) {
+    var playing = false
+    if (playAt > 0) {
       var into = now - playAt
-      if (into < Motion.playMs(name)) {
-        kind = "play"
-        at = into
-        return
-      }
-      playAt = 0
+      if (into >= Motion.playMs(name)) playAt = 0
+      else if (into >= 0) { kind = "play"; at = into; playing = true }
     }
     var period = Motion.loopMs(name)
     if (period > 0 && (live || looping)) {
@@ -111,14 +122,26 @@ Item {
       lastPhase = ph
       // A loop joins and leaves at the top of a round, where it is at rest.
       if (wrapped) looping = live
-      if (looping) { kind = "loop"; at = ph; return }
+      if (playing) { sleepFor(0); return }
+      if (looping) {
+        kind = "loop"
+        at = ph
+        var still = Motion.untilMove(name, ph)
+        // Wake at the next move, or at the top of the round to leave there.
+        sleepFor(still > 0 ? Math.min(still, live ? still : period - ph) : 0)
+        return
+      }
       kind = "rest"
       at = 0
+      // Waiting to join at the top of the next round.
+      sleepFor(playAt > 0 ? Math.max(0, playAt - now) : period - ph)
       return
     }
+    if (playing) { sleepFor(0); return }
     kind = "rest"
     at = 0
     if (playAt === 0) ticker.stop()
+    else sleepFor(playAt - now)
   }
 
   Timer {
@@ -128,20 +151,57 @@ Item {
     onTriggered: icon.step()
   }
 
-  // Over a count, so a new frame updates the rectangles in place.
-  Repeater {
-    model: icon.rects.length
+  // How far the cells move to start on a whole device pixel. Cells are whole
+  // device pixels wide, but at 1.25 the icon itself often sits between two,
+  // and every edge then lands half on one: the disk and the box blurred into
+  // blobs. Checked before each frame the window draws (it draws only when
+  // something changed), as ROG Deck does.
+  property real snapX: 0
+  property real snapY: 0
 
-    Rectangle {
-      required property int index
-      readonly property var r: icon.rects[index] || [0, 0, 0, 0, 1]
-      x: r[0] * icon.cell
-      y: r[1] * icon.cell
-      width: r[2] * icon.cell
-      height: r[3] * icon.cell
-      opacity: r[4]
-      color: icon.color
-      antialiasing: false
+  function snap() {
+    if (!visible || !parent) return
+    // The box before its own turn (a refresh button turns its icon in
+    // quarters), and the move turned into the icon's own frame.
+    var p = parent.mapToItem(null, icon.x, icon.y)
+    var dx = Math.round(p.x * dpr) / dpr - p.x
+    var dy = Math.round(p.y * dpr) / dpr - p.y
+    var q = ((Math.round(rotation / 90) % 4) + 4) % 4
+    if (Math.abs(rotation - Math.round(rotation / 90) * 90) > 0.01) { dx = 0; dy = 0 }
+    else if (q === 1) { var t = dx; dx = dy; dy = -t }
+    else if (q === 2) { dx = -dx; dy = -dy }
+    else if (q === 3) { var u = dx; dx = -dy; dy = u }
+    if (Math.abs(dx - snapX) > 0.001) snapX = dx
+    if (Math.abs(dy - snapY) > 0.001) snapY = dy
+  }
+
+  Connections {
+    target: icon.Window.window
+    ignoreUnknownSignals: true
+    function onAfterAnimating() { icon.snap() }
+  }
+
+  Item {
+    x: icon.snapX
+    y: icon.snapY
+    width: icon.implicitWidth
+    height: icon.implicitHeight
+
+    // Over a count, so a new frame updates the rectangles in place.
+    Repeater {
+      model: icon.rects.length
+
+      Rectangle {
+        required property int index
+        readonly property var r: icon.rects[index] || [0, 0, 0, 0, 1]
+        x: r[0] * icon.cell
+        y: r[1] * icon.cell
+        width: r[2] * icon.cell
+        height: r[3] * icon.cell
+        opacity: r[4]
+        color: icon.color
+        antialiasing: false
+      }
     }
   }
 }

@@ -1,5 +1,6 @@
 import QtQuick
 import qs.Commons
+import qs.Commons as Commons
 import "Model.js" as Model
 
 // The title room's content: the server mark, a bold title, and the prompt
@@ -17,7 +18,7 @@ Item {
   property real markSize: Style.font.display
   property string title: ""
   property string line: ""
-  property color lineColor: Qt.darker(host.fg, 1.3)
+  property color lineColor: Qt.tint(host.fg, Qt.rgba(Commons.Color.background.r, Commons.Color.background.g, Commons.Color.background.b, 0.25))
   // A line that answers the pointer (a drag, a fader) shows at once.
   property bool instant: false
   default property alias actions: actionRow.children
@@ -58,13 +59,13 @@ Item {
   }
 
   // Measures two real lines of the prompt, for the room it always keeps.
-  Text {
+  MonoText {
     id: twoLines
+    step: "small"
+    fontFamily: hero.host.fontFamily
     visible: false
     textFormat: Text.PlainText
     text: "X\nX"
-    font.family: hero.host.fontFamily
-    font.pixelSize: Style.font.caption
   }
 
   ServerMark {
@@ -91,8 +92,20 @@ Item {
       width: parent.width
       height: Math.max(titleText.implicitHeight, actionRow.implicitHeight)
 
-      Text {
+      // Only to measure the title step's advance.
+      MonoText {
+        id: titleProbe
+        visible: false
+        step: "title"
+        fontFamily: hero.host.fontFamily
+      }
+
+      // The server's name at the title step when it fits on one line; a
+      // longer one drops to body, which took three lines at title size.
+      MonoText {
         id: titleText
+        step: hero.title.length * titleProbe.advance <= width ? "title" : "body"
+        fontFamily: hero.host.fontFamily
         anchors.left: parent.left
         anchors.right: actionRow.left
         anchors.rightMargin: Style.space(4)
@@ -101,9 +114,6 @@ Item {
         textFormat: Text.PlainText
         text: Model.breakable(hero.title)
         color: hero.host.fg
-        font.family: hero.host.fontFamily
-        font.pixelSize: Style.font.title
-        font.bold: true
       }
 
       Row {
@@ -124,17 +134,21 @@ Item {
       width: parent.width
       height: Math.max(lineText.implicitHeight, twoLines.implicitHeight)
 
-      Text {
+      MonoText {
         id: promptSign
+        step: "small"
+        fontFamily: hero.host.fontFamily
         textFormat: Text.PlainText
-        text: "\u276F"
+        // Monocraft's own sign; it has no ❯, and a fallback font's taller
+        // line changed the row's height.
+        text: "\u203A"
         color: hero.lineColor
-        font.family: hero.host.fontFamily
-        font.pixelSize: Style.font.caption
       }
 
-      Text {
+      MonoText {
         id: lineText
+        step: "small"
+        fontFamily: hero.host.fontFamily
         anchors.left: promptSign.right
         anchors.leftMargin: Style.space(6)
         anchors.right: parent.right
@@ -142,8 +156,6 @@ Item {
         textFormat: Text.StyledText
         text: hero.revealed
         color: hero.lineColor
-        font.family: hero.host.fontFamily
-        font.pixelSize: Style.font.caption
       }
     }
   }

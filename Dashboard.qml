@@ -58,20 +58,22 @@ Column {
 
     implicitHeight: Math.max(pairLabel.implicitHeight, pairValue.implicitHeight)
 
-    Text {
+    MonoText {
       id: pairLabel
+      step: "small"
+      fontFamily: dash.host.fontFamily
       width: Math.min(implicitWidth, pair.width - Math.min(pairValue.implicitWidth, pair.width / 2) - pair.gap)
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
       text: Model.breakable(pair.label)
       color: dash.host.fg
       opacity: 0.6
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
 
     Decode {
       id: pairValue
+      step: "small"
+      fontFamily: dash.host.fontFamily
       host: dash.host
       anchors.right: parent.right
       width: Math.min(implicitWidth, pair.width - pairLabel.width - pair.gap)
@@ -80,8 +82,6 @@ Column {
       value: Model.breakable(pair.value)
       delay: pair.delay
       color: pair.value === "--" ? dash.host.dim : dash.host.fg
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
   }
 
@@ -138,8 +138,10 @@ Column {
         width: picks.width
         implicitHeight: Math.max(pickLabel.implicitHeight, pickSwitch.implicitHeight)
 
-        Text {
+        MonoText {
           id: pickLabel
+          step: "body"
+          fontFamily: dash.host.fontFamily
           anchors.left: parent.left
           anchors.right: pickSwitch.left
           anchors.rightMargin: Style.space(8)
@@ -148,8 +150,6 @@ Column {
           wrapMode: Text.Wrap
           text: pick.modelData.inRoom
           color: dash.host.fg
-          font.family: dash.host.fontFamily
-          font.pixelSize: Style.font.bodySmall
         }
 
         // The label switches too, as the kit's rows do.
@@ -206,14 +206,13 @@ Column {
         live: cell.hot
       }
 
-      Text {
+      MonoText {
+        step: "body"
+        fontFamily: dash.host.fontFamily
         anchors.verticalCenter: parent.verticalCenter
         textFormat: Text.PlainText
         text: cell.part ? cell.part.label : ""
         color: dash.host.fg
-        font.family: dash.host.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        font.bold: true
       }
     }
 
@@ -221,6 +220,7 @@ Column {
     // the meter has come, which for a share is the meter itself.
     BigFigure {
       value: cell.known ? cell.part.value * (cellMeter.level > 0 ? Math.min(1, cellMeter.shown / cellMeter.level) : 1) : null
+      reserve: cell.known ? cell.part.value : null
       tone: cell.shade
       foreground: dash.host.fg
       mark: cell.part && cell.part.hot ? "warning-diamond" : ""
@@ -243,14 +243,14 @@ Column {
     }
 
     Decode {
+      step: "small"
+      fontFamily: dash.host.fontFamily
       host: dash.host
       width: parent.width
       wrapMode: Text.Wrap
       value: cell.part ? cell.part.state : ""
       delay: cell.delay + 80
       color: cell.part && cell.part.hot ? dash.host.lowTone : dash.host.dim
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.caption
     }
   }
 
@@ -267,17 +267,16 @@ Column {
 
     implicitHeight: Math.max(diskName.implicitHeight, rowMeter.implicitHeight)
 
-    Text {
+    MonoText {
       id: diskName
+      step: "body"
+      fontFamily: dash.host.fontFamily
       width: Math.round(diskRow.width * 0.34)
       anchors.verticalCenter: parent.verticalCenter
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
       text: diskRow.disk ? Model.breakable(diskRow.disk.name) : ""
       color: dash.host.fg
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      font.bold: true
     }
 
     Meter {
@@ -356,8 +355,10 @@ Column {
       live: tileHead.live
     }
 
-    Text {
+    MonoText {
       id: tileTitle
+      step: "small"
+      fontFamily: dash.host.fontFamily
       anchors.left: tileIcon.right
       anchors.leftMargin: Style.space(4)
       anchors.right: parent.right
@@ -366,9 +367,6 @@ Column {
       wrapMode: Text.Wrap
       text: tileHead.title
       color: dash.host.fg
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
-      font.bold: true
     }
   }
 
@@ -408,8 +406,10 @@ Column {
       color: row.sick ? dash.host.lowTone : row.running ? dash.toneFor("containers") : dash.host.dim
     }
 
-    Text {
+    MonoText {
       id: rowName
+      step: "body"
+      fontFamily: dash.host.fontFamily
       anchors.left: parent.left
       anchors.leftMargin: Style.space(4) + dash.host.iconColumn * 0.75
       anchors.right: statusBox.left
@@ -419,8 +419,6 @@ Column {
       wrapMode: Text.Wrap
       text: row.container ? Model.breakable(row.container.name) : ""
       color: row.ink
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
 
     Item {
@@ -436,8 +434,10 @@ Column {
         Math.max(Style.space(140), row.width - rowName.anchors.leftMargin - rowName.implicitWidth - Style.space(8) - Style.space(4))))
       height: rowStatus.implicitHeight
 
-      Text {
+      MonoText {
         id: rowStatus
+        step: "small"
+        fontFamily: dash.host.fontFamily
         width: parent.width
         visible: !buttons.visible
         horizontalAlignment: Text.AlignRight
@@ -445,8 +445,6 @@ Column {
         wrapMode: Text.Wrap
         text: row.busy ? "Working…" : Model.keepUnits(Model.containerStatus(row.container))
         color: row.sick ? dash.host.lowTone : dash.host.dim
-        font.family: dash.host.fontFamily
-        font.pixelSize: Style.font.caption
       }
     }
 
@@ -509,26 +507,25 @@ Column {
       anchors.verticalCenter: parent.verticalCenter
       spacing: Style.space(1)
 
-      Text {
+      MonoText {
+        step: "body"
+        fontFamily: dash.host.fontFamily
         width: parent.width
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
         text: unitRow.unit ? Model.breakable(unitRow.unit.name) : ""
         color: dash.host.fg
-        font.family: dash.host.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        font.bold: true
       }
 
-      Text {
+      MonoText {
+        step: "small"
+        fontFamily: dash.host.fontFamily
         visible: text !== ""
         width: parent.width
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
         text: unitRow.busy ? "Restarting…" : (unitRow.unit ? unitRow.unit.description : "")
         color: dash.host.dim
-        font.family: dash.host.fontFamily
-        font.pixelSize: Style.font.caption
       }
     }
 
@@ -553,40 +550,42 @@ Column {
 
     implicitHeight: Math.max(procName.implicitHeight, procCpu.implicitHeight)
 
-    Text {
+    MonoText {
       id: procName
+      step: "body"
+      fontFamily: dash.host.fontFamily
       width: procCpu.x - Style.space(10)
       textFormat: Text.PlainText
       wrapMode: Text.Wrap
       text: proc.process ? Model.breakable(proc.process.name) : ""
       color: dash.host.fg
       opacity: 0.6
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
 
-    Text {
+    MonoText {
       id: procCpu
+      step: "body"
+      fontFamily: dash.host.fontFamily
       anchors.right: procMem.left
-      width: Style.space(56)
+      // Columns in characters of the face: "100.0%" and a space, "999.9 MB"
+      // and a space, so the two never run together at any scale.
+      width: advance * 7
       horizontalAlignment: Text.AlignRight
       textFormat: Text.PlainText
       text: proc.process ? proc.process.cpu.toFixed(1) + "%" : ""
       color: proc.process && proc.process.cpu >= 80 ? dash.host.lowTone : dash.host.fg
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
 
-    Text {
+    MonoText {
       id: procMem
+      step: "body"
+      fontFamily: dash.host.fontFamily
       anchors.right: parent.right
-      width: Style.space(72)
+      width: advance * 9
       horizontalAlignment: Text.AlignRight
       textFormat: Text.PlainText
       text: proc.process ? Model.size(proc.process.rssBytes) : ""
       color: dash.host.fg
-      font.family: dash.host.fontFamily
-      font.pixelSize: Style.font.bodySmall
     }
   }
 
@@ -694,6 +693,12 @@ Column {
   Row {
     id: tiles
     readonly property real quarter: (width - spacing * 3) / 4
+    // Without Docker there is no Containers half: Disk and Network take half
+    // the row each, or Network all of it when there is no disk either,
+    // instead of two quarters and a hole.
+    readonly property bool withContainers: dash.host.containers.length > 0
+    readonly property real diskWidth: withContainers ? quarter : (width - spacing) / 2
+    readonly property real networkWidth: withContainers ? quarter : (disksRoom.visible ? (width - spacing) / 2 : width)
     readonly property real tileHeight: Math.max(disksRoom.visible ? disksRoom.implicitHeight : 0,
       networkRoom.implicitHeight, containersRoom.visible ? containersRoom.implicitHeight : 0)
     width: parent.width
@@ -702,7 +707,7 @@ Column {
     Room {
       id: disksRoom
       visible: !!dash.rootDisk
-      width: tiles.quarter
+      width: tiles.diskWidth
       height: tiles.tileHeight
       host: dash.host
       pad: Style.space(8)
@@ -730,6 +735,7 @@ Column {
       // the tile.
       BigFigure {
         value: dash.rootDisk ? rootMeter.shown : null
+        reserve: dash.rootDisk ? dash.rootDisk.level : null
         tone: disksRoom.tone
         foreground: dash.host.fg
         mark: dash.diskList.some(function(d) { return d.hot }) ? "warning-diamond" : ""
@@ -753,7 +759,7 @@ Column {
 
     Room {
       id: networkRoom
-      width: tiles.quarter
+      width: tiles.networkWidth
       height: tiles.tileHeight
       host: dash.host
       pad: Style.space(8)
@@ -876,6 +882,7 @@ Column {
         BigFigure {
           id: countFigure
           value: dash.counts.total > 0 ? Math.round(runMeter.shown / 100 * dash.counts.total) : null
+          reserve: dash.counts.total > 0 ? dash.counts.running : null
           suffix: ""
           tone: containersRoom.shade
           foreground: dash.host.fg
@@ -895,6 +902,8 @@ Column {
             model: lines.length
 
             Decode {
+              step: "small"
+              fontFamily: dash.host.fontFamily
               required property int index
               host: dash.host
               width: parent.width
@@ -902,8 +911,6 @@ Column {
               value: noteLines.lines[index] || ""
               delay: containersRoom.delay + 120 + index * 40
               color: index > 0 && dash.counts.trouble > 0 ? dash.host.lowTone : dash.host.dim
-              font.family: dash.host.fontFamily
-              font.pixelSize: Style.font.caption
             }
           }
         }
@@ -992,6 +999,18 @@ Column {
         visible: tileDrawer.shown === "containers"
         width: parent.width
         spacing: Style.space(1)
+
+        // The buttons show only on the row under the pointer, so say so.
+        MonoText {
+          step: "small"
+          fontFamily: dash.host.fontFamily
+          width: parent.width
+          bottomPadding: Style.space(6)
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          text: "Hover a container to start, stop or restart it"
+          color: dash.host.dim
+        }
 
         Facts { facts: Model.containerFacts(dash.host.containers) }
 

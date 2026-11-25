@@ -77,6 +77,9 @@ Rectangle {
     hoverEnabled: true
     enabled: room.clickable
     cursorShape: Qt.PointingHandCursor
+    // The icon acts itself out under the pointer too, as in Batteries and
+    // ROG Deck; a play already running finishes first (PixelIcon).
+    onEntered: room.story++
     onPositionChanged: function(mouse) {
       for (var i = 0; i < room.cells.length; i++) {
         if (!room.cells[i]) continue

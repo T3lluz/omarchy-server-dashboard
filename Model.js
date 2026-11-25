@@ -223,6 +223,21 @@ function parseProcesses(lines) {
   return out.slice(0, 6)
 }
 
+// Names in the order a person counts: svc_2 before svc_10. Runs of digits
+// compare as numbers. Written out because QML's JavaScript has no Intl, so
+// localeCompare's { numeric: true } is ignored there.
+function naturalCompare(a, b) {
+  var x = String(a || "").toLowerCase().match(/\d+|\D+/g) || []
+  var y = String(b || "").toLowerCase().match(/\d+|\D+/g) || []
+  for (var i = 0; i < Math.min(x.length, y.length); i++) {
+    if (x[i] === y[i]) continue
+    var nx = /^\d/.test(x[i]), ny = /^\d/.test(y[i])
+    if (nx && ny && Number(x[i]) !== Number(y[i])) return Number(x[i]) - Number(y[i])
+    return x[i] < y[i] ? -1 : 1
+  }
+  return x.length - y.length || (a < b ? -1 : a > b ? 1 : 0)
+}
+
 function parseContainers(lines) {
   var out = []
   for (var i = 0; i < (lines || []).length; i++) {
@@ -233,7 +248,7 @@ function parseContainers(lines) {
   out.sort(function(a, b) {
     var ra = a.state === "running" ? 0 : 1
     var rb = b.state === "running" ? 0 : 1
-    return ra !== rb ? ra - rb : a.name.localeCompare(b.name)
+    return ra !== rb ? ra - rb : naturalCompare(a.name, b.name)
   })
   return out
 }
@@ -285,17 +300,78 @@ function withRates(current, previous, elapsedSec) {
   current.cpuPercent = null
   current.rxRate = null
   current.txRate = null
-  if (!previous || !(elapsedSec > 0.2)) return current
-  if (current.jiffies && previous.jiffies) {
-    var dTotal = current.jiffies.total - previous.jiffies.total
-    var dIdle = current.jiffies.idle - previous.jiffies.idle
-    if (dTotal > 0) current.cpuPercent = clamp((dTotal - dIdle) / dTotal * 100, 0, 100)
+  if (previous && elapsedSec > 0.2) {
+    if (current.jiffies && previous.jiffies) {
+      var dTotal = current.jiffies.total - previous.jiffies.total
+      var dIdle = current.jiffies.idle - previous.jiffies.idle
+      if (dTotal > 0) current.cpuPercent = clamp((dTotal - dIdle) / dTotal * 100, 0, 100)
+    }
+    if (current.net && previous.net) {
+      current.rxRate = Math.max(0, current.net.rx - previous.net.rx) / elapsedSec
+      current.txRate = Math.max(0, current.net.tx - previous.net.tx) / elapsedSec
+    }
   }
-  if (current.net && previous.net) {
-    current.rxRate = Math.max(0, current.net.rx - previous.net.rx) / elapsedSec
-    current.txRate = Math.max(0, current.net.tx - previous.net.tx) / elapsedSec
-  }
+  current.heat = heat(current, previous ? previous.heat : null)
   return current
+}
+
+// What runs hot, decided once a poll with the poll before in mind. A reading
+// turns hot at its threshold and cools only HEAT_EASE points under it, so a
+// processor hovering at 90% does not flip every poll, replaying its icon and
+// swapping the bar's mark each time. { cpu, memory, temp (0 normal, 1 warm,
+// 2 hot), disks: { mount: hot } }.
+var HEAT_EASE = 5
+var CPU_HOT = 90
+var MEMORY_HOT = 92
+var TEMP_WARM = 70
+var TEMP_HOT = 85
+
+function sticky(value, threshold, was) {
+  if (!hasLevel(value)) return false
+  return value >= (was ? threshold - HEAT_EASE : threshold)
+}
+
+// The same for a level with two steps (normal, warm, hot): it climbs at once
+// and comes down a step only HEAT_EASE under that step's threshold.
+function stickyLevel(value, warm, hot, was) {
+  if (!hasLevel(value)) return 0
+  var now = value >= hot ? 2 : value >= warm ? 1 : 0
+  if (now >= (was || 0)) return now
+  if (was === 2 && value >= hot - HEAT_EASE) return 2
+  if (was >= 1 && value >= warm - HEAT_EASE) return 1
+  return 0
+}
+
+function heat(snap, previous) {
+  var was = previous || {}
+  var out = {
+    cpu: sticky(snap.cpuPercent, CPU_HOT, was.cpu),
+    memory: !!snap.memory && sticky(snap.memory.percent, MEMORY_HOT, was.memory),
+    temp: stickyLevel(snap.cpuTemp, TEMP_WARM, TEMP_HOT, was.temp),
+    disks: {}
+  }
+  ;(snap.disks || []).forEach(function(d) {
+    out.disks[d.mount] = sticky(d.percent, DISK_ALERT, (was.disks || {})[d.mount])
+  })
+  return out
+}
+
+// What runs hot in a snapshot: its heat when it has one (every poll's does),
+// else the thresholds alone.
+function cpuHot(snap) {
+  return snap && snap.heat ? snap.heat.cpu : sticky(snap ? snap.cpuPercent : null, CPU_HOT, false)
+}
+function memoryHot(snap) {
+  if (!snap || !snap.memory) return false
+  return snap.heat ? snap.heat.memory : sticky(snap.memory.percent, MEMORY_HOT, false)
+}
+function tempLevel(snap) {
+  if (!snap) return 0
+  return snap.heat ? snap.heat.temp : stickyLevel(snap.cpuTemp, TEMP_WARM, TEMP_HOT, 0)
+}
+function diskHot(snap, disk) {
+  if (snap && snap.heat && snap.heat.disks.hasOwnProperty(disk.mount)) return snap.heat.disks[disk.mount]
+  return disk.percent >= DISK_ALERT
 }
 
 function parsePeers(raw) {
@@ -310,7 +386,7 @@ function parsePeers(raw) {
     if (a.online !== b.online) return a.online ? -1 : 1
     var la = a.os === "linux" ? 0 : 1
     var lb = b.os === "linux" ? 0 : 1
-    return la !== lb ? la - lb : a.name.localeCompare(b.name)
+    return la !== lb ? la - lb : naturalCompare(a.name, b.name)
   })
   return out
 }
@@ -331,7 +407,8 @@ function bytes(value) {
   var units = ["B", "K", "M", "G", "T", "P"]
   var v = Math.max(0, value)
   var i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  // Four digits never: 1000 K reads as 1M.
+  while (v >= 1000 && i < units.length - 1) { v /= 1024; i++ }
   var digits = v >= 100 || i === 0 ? 0 : (v >= 10 ? 1 : 1)
   return v.toFixed(digits).replace(/\.0$/, "") + units[i]
 }
@@ -501,14 +578,14 @@ function systemCells(snap) {
     value: hasLevel(snap.cpuPercent) ? snap.cpuPercent : null,
     level: hasLevel(snap.cpuPercent) ? snap.cpuPercent : null, suffix: "%",
     state: snap.load ? "Load " + snap.load.one.toFixed(2) : "--",
-    hot: level(snap.cpuPercent, 70, 90) === 2
+    hot: cpuHot(snap)
   }]
   if (snap.memory) {
     cells.push({ key: "memory", label: "Memory", icon: "memory-stick", value: snap.memory.percent, level: snap.memory.percent,
-                 suffix: "%", state: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes), hot: snap.memory.percent >= 92 })
+                 suffix: "%", state: sizeOf(snap.memory.usedBytes, snap.memory.totalBytes), hot: memoryHot(snap) })
   }
   if (hasLevel(snap.cpuTemp)) {
-    var warmth = level(snap.cpuTemp, 70, 85)
+    var warmth = tempLevel(snap)
     cells.push({ key: "temp", label: "Temp", icon: "thermometer", value: snap.cpuTemp, level: temperatureLevel(snap.cpuTemp),
                  suffix: "°C", state: ["Normal", "Warm", "Hot"][warmth], hot: warmth === 2 })
   }
@@ -533,7 +610,9 @@ function rateParts(bytesPerSecond) {
   var units = ["B", "K", "M", "G", "T"]
   var v = Math.max(0, bytesPerSecond)
   var i = 0
-  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
+  // At 1000 the next unit up: "1000K/s" is a digit wider than any other rate
+  // and squeezed the pixel type to one device pixel a cell.
+  while (v >= 1000 && i < units.length - 1) { v /= 1024; i++ }
   var decimals = i > 0 && v < 10 ? 1 : 0
   // 9.96 K would round to "10.0"; show it as "10" in the same unit.
   if (decimals === 1 && Math.round(v * 10) / 10 >= 10) decimals = 0
@@ -605,7 +684,7 @@ function disks(snap) {
     return {
       key: "disk:" + disk.mount, mount: disk.mount, device: disk.device, name: name,
       level: disk.percent, used: size(disk.usedBytes), free: size(disk.availableBytes), total: size(disk.totalBytes),
-      detail: sizeOf(disk.usedBytes, disk.totalBytes), hot: disk.percent >= DISK_ALERT
+      detail: sizeOf(disk.usedBytes, disk.totalBytes), hot: diskHot(snap, disk)
     }
   })
 }
@@ -1061,7 +1140,10 @@ function escapeHtml(text) {
 // word never wraps differently while it types. The cursor stands in for the
 // next character, except a space, which it would glue to the next word; once
 // typed, it blinks in the cell kept for it at the end.
-var CURSOR = "▌"
+// An underscore, the terminal's own cursor, as Sonus has it: Monocraft has no
+// block characters, and a glyph it lacks comes from a fallback font with
+// taller lines, so the row grew and shrank as the cursor moved.
+var CURSOR = "_"
 var CLEAR = "<font color=\"#00000000\">"
 
 function revealLine(line, typed, cursorOn) {
@@ -1128,10 +1210,10 @@ function barItems(snap, stats) {
   if (!snap) return []
   var out = []
   ;(stats || []).forEach(function(stat) {
-    if (stat === "cpu") out.push({ key: "cpu", icon: "cpu", text: percentText(snap.cpuPercent), hot: level(snap.cpuPercent, 70, 90) === 2 })
-    else if (stat === "ram" && snap.memory) out.push({ key: "ram", icon: "memory-stick", text: percentText(snap.memory.percent), hot: snap.memory.percent >= 92 })
-    else if (stat === "disk" && snap.disks && snap.disks.length) out.push({ key: "disk", icon: "database", text: percentText(snap.disks[0].percent), hot: snap.disks[0].percent >= DISK_ALERT })
-    else if (stat === "temp" && hasLevel(snap.cpuTemp)) out.push({ key: "temp", icon: "thermometer", text: Math.round(snap.cpuTemp) + "°", hot: level(snap.cpuTemp, 70, 85) === 2 })
+    if (stat === "cpu") out.push({ key: "cpu", icon: "cpu", text: percentText(snap.cpuPercent), hot: cpuHot(snap) })
+    else if (stat === "ram" && snap.memory) out.push({ key: "ram", icon: "memory-stick", text: percentText(snap.memory.percent), hot: memoryHot(snap) })
+    else if (stat === "disk" && snap.disks && snap.disks.length) out.push({ key: "disk", icon: "database", text: percentText(snap.disks[0].percent), hot: diskHot(snap, snap.disks[0]) })
+    else if (stat === "temp" && hasLevel(snap.cpuTemp)) out.push({ key: "temp", icon: "thermometer", text: Math.round(snap.cpuTemp) + "°", hot: tempLevel(snap) === 2 })
     else if (stat === "net") {
       out.push({ key: "rx", icon: "arrow-down", text: hasLevel(snap.rxRate) ? bytes(snap.rxRate) : "--", hot: false })
       out.push({ key: "tx", icon: "arrow-up", text: hasLevel(snap.txRate) ? bytes(snap.txRate) : "--", hot: false })
@@ -1300,7 +1382,7 @@ function calmNote(key, snapshot, server) {
     note.body = name + " is running again on " + server + "."
   } else {
     note.title = "Service recovered"
-    note.body = name + " is no longer failed on " + server + "."
+    note.body = name + " is running again on " + server + "."
   }
   note.mark = "check"
   return note

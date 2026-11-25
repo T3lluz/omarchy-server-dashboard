@@ -18,6 +18,16 @@ Item {
   Behavior on height { NumberAnimation { duration: Style.duration(280); easing.type: Easing.OutCubic } }
   Behavior on opacity { NumberAnimation { duration: Style.duration(220); easing.type: Easing.OutCubic } }
 
+  // Takes the clicks that land between the drawer's own rows and switches,
+  // which would reach the room under it and close it. Under the content, so
+  // those still take theirs; no hover, so the room stays lit.
+  MouseArea {
+    anchors.fill: parent
+    acceptedButtons: Qt.AllButtons
+    cursorShape: Qt.ArrowCursor
+    onClicked: function(mouse) { mouse.accepted = true }
+  }
+
   Column {
     id: drawerColumn
     width: parent.width

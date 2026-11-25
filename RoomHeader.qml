@@ -56,8 +56,10 @@ Item {
       width: parent.width
       height: titleText.height
 
-      Text {
+      MonoText {
         id: titleText
+        step: "body"
+        fontFamily: head.host.fontFamily
         readonly property real room: chevron.visible ? chevron.width + Style.space(5) : 0
         property real lastRight: 0
         property real lastY: 0
@@ -67,9 +69,6 @@ Item {
         wrapMode: Text.WrapAtWordBoundaryOrAnywhere
         text: head.title
         color: head.dimmed ? head.host.dim : head.host.fg
-        font.family: head.host.fontFamily
-        font.pixelSize: Style.font.body
-        font.bold: true
         onLineLaidOut: function(line) {
           if (!line.isLast) return
           lastRight = line.x + line.implicitWidth
@@ -92,6 +91,8 @@ Item {
     }
 
     Decode {
+      step: "small"
+      fontFamily: head.host.fontFamily
       host: head.host
       width: parent.width
       visible: value !== ""
@@ -99,8 +100,6 @@ Item {
       value: Model.breakable(head.status)
       delay: head.delay
       color: head.host.dim
-      font.family: head.host.fontFamily
-      font.pixelSize: Style.font.caption
     }
   }
 

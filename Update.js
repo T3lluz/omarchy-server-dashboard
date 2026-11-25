@@ -44,7 +44,9 @@ function line(check, state, now) {
 
 // The banner over the panel, or null. A finished update shows for ten
 // minutes, a failed one for an hour. `icons` names the glyphs for
-// "update" and "done" in the plugin's Glyph.
+// "update" and "done" in the plugin's Glyph. `seen` names what the banner is
+// about, so a closed one stays closed until there is something new: a newer
+// commit on the remote, or another update's outcome.
 function notice(name, check, state, version, now, icons) {
   var glyphs = icons || { update: "󰚰", done: "󰄬" }
   if (applying(state, now))
@@ -52,12 +54,13 @@ function notice(name, check, state, version, now, icons) {
   if (state && state.state === "failed" && now - state.at < 3600)
     // Older runs left the raw tool name in front of the news.
     return { key: "update", tone: "urgent", icon: glyphs.update, text: "Update failed: " + String(state.message || "").replace(/^omarchy-plugin-update: /, ""),
-             action: "update", actionLabel: "Retry", dismissable: true }
+             action: "update", actionLabel: "Retry", dismissable: true, seen: "failed " + state.at }
   if (state && state.state === "done" && state.version === version && now - state.at < 600)
-    return { key: "update", tone: "accent", icon: glyphs.done, text: name + ": " + state.message, dismissable: true }
+    return { key: "update", tone: "accent", icon: glyphs.done, text: name + ": " + state.message, dismissable: true, seen: "done " + state.at }
   if (check && check.available)
     return { key: "update", tone: "accent", icon: glyphs.update,
              text: newer(check) ? name + " " + check.latest + " is available" : "An update to " + name + " is available",
-             action: "update", actionLabel: "Update", dismissable: true }
+             action: "update", actionLabel: "Update", dismissable: true,
+             seen: "available " + (check.commit || check.latest || "") }
   return null
 }

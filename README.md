@@ -4,7 +4,7 @@
   <p>A server in the Omarchy bar, over <b>SSH</b>, built for machines on <b>Tailscale</b>:<br/>
   live CPU, memory, disks, temperature and network, <b>Docker</b> containers and failed services, with restart, reboot and terminal actions.</p>
   <p>
-    <img alt="Version" src="https://img.shields.io/badge/v1.6.1-111111?label=version" />
+    <img alt="Version" src="https://img.shields.io/badge/v1.7.0-111111?label=version" />
     <img alt="Omarchy 4" src="https://img.shields.io/badge/Omarchy-4-3ecbe6" />
     <img alt="Nothing installed on the server" src="https://img.shields.io/badge/server-agentless-3ecbe6" />
     <a href="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/T3lluz/omarchy-server-dashboard/actions/workflows/ci.yml/badge.svg" /></a>
@@ -37,7 +37,7 @@ Needs `openssh`, `secret-tool` (libsecret) with a running keyring, and `jq`; `ta
 
 Click the bar icon. The panel opens on a connect form:
 
-1. Type `user@host`, for example `casaos@100.64.0.10`. Online machines on your tailnet are listed under the form; click one to fill in its address.
+1. Type `user@host`, for example `user@100.64.0.10`. Online machines on your tailnet are listed under the form; click one to fill in its address.
 2. Type the password and press Enter, or leave it empty to use your SSH keys.
 
 The password is stored in your keyring (GNOME Keyring, via `secret-tool`) and handed to `ssh` through `SSH_ASKPASS`. It never appears in `shell.json`, in a command line, or on disk.
@@ -87,6 +87,16 @@ omarchy-shell io.github.t3lluz.server-dashboard refresh
 omarchy-shell io.github.t3lluz.server-dashboard status     # JSON: connection, CPU, memory, uptime
 ```
 
+## Remove
+
+Clear the saved password and close the SSH session first, while the script is still there, then remove the plugin:
+
+```bash
+bash ~/.config/omarchy/plugins/io.github.t3lluz.server-dashboard/bin/server-dash forget user@host 22
+omarchy plugin remove io.github.t3lluz.server-dashboard
+rm -rf ~/.local/state/omarchy-server-dashboard    # pinned host keys and notification pictures
+```
+
 ## Security
 
 - Host keys are trusted on first use and pinned in `~/.local/state/omarchy-server-dashboard/known_hosts`. A changed key stops the connection before the password is sent; the panel then offers to trust the new key, which you should accept only if you reinstalled the server.
@@ -98,6 +108,7 @@ omarchy-shell io.github.t3lluz.server-dashboard status     # JSON: connection, C
 ```bash
 node tests/model.test.js
 node tests/motion.test.js
+python3 -B -m unittest discover tests    # bin/server-dash against a stand-in ssh, the badge, the updater
 bash -n bin/server-dash
 omarchy plugin validate .
 omarchy restart shell    # pick up QML changes

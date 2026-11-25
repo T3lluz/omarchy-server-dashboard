@@ -5,7 +5,7 @@ const assert = require("assert")
 
 const load = (file, names) => new Function(
   fs.readFileSync(path.join(__dirname, "..", file), "utf8").replace(/^\.pragma library\s*/, "") + "\nreturn { " + names + " }")()
-const Motion = load("Motion.js", "LOOP_MS, TICK_MS, MOTIONS, motionOf, playMs, loopMs, phase, frame")
+const Motion = load("Motion.js", "LOOP_MS, TICK_MS, MOTIONS, motionOf, playMs, loopMs, phase, frame, moves, untilMove")
 const Pixels = load("Pixels.js", "icons")
 
 // Drawn cells as "x,y@alpha", so two frames compare whatever their rects.
@@ -107,6 +107,31 @@ for (const name in Motion.MOTIONS) {
   for (const kind of ["play", "loop"]) {
     const length = kind === "play" ? m.play : m.loop
     for (let ms = 0; length && ms <= length; ms += 50) assert.strictEqual(Motion.frame(name, art, false, kind, ms).length, count, name + " keeps its count")
+  }
+}
+
+// A resting loop says how long it stays still, so an icon can sleep: the
+// alert blinks in the first 28% of its 3 s round and rests the rest.
+{
+  assert.deepStrictEqual(Motion.moves("warning-diamond"), [[120, 360], [600, 840]])
+  assert.strictEqual(Motion.untilMove("warning-diamond", 200), 0, "moving")
+  assert.strictEqual(Motion.untilMove("warning-diamond", 400), 200, "between blinks")
+  assert.strictEqual(Motion.untilMove("warning-diamond", 1000), 3000 - 1000 + 120, "round the top")
+  assert.strictEqual(Motion.untilMove("warning-diamond", 0), 120)
+  for (const name in Motion.MOTIONS) {
+    const m = Motion.MOTIONS[name]
+    if (!m.loop) continue
+    assert.ok(Motion.moves(name).length > 0, name + "'s loop moves")
+    for (let ph = 0; ph < m.loop; ph += 37) {
+      const wait = Motion.untilMove(name, ph)
+      assert.ok(wait >= 0 && wait <= m.loop, name + " waits a round at most")
+      // Nothing moves during the wait, to the sampling's 10 ms.
+      for (let t = ph; t < ph + wait - 10; t += 10) {
+        const tt = t % m.loop
+        assert.deepStrictEqual(cells(Motion.frame(name, Pixels.icons[name], false, "loop", tt)),
+          cells(Motion.frame(name, Pixels.icons[name], false, "rest", 0)), name + " is still while it waits")
+      }
+    }
   }
 }
 

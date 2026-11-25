@@ -79,7 +79,7 @@ PopupWindow {
   }
 
   // The widest row with its name on one line. The card grows to fit it, up
-  // to 360, so a disk like media_library_archive_2026 keeps one line and its
+  // to 380, so a disk like media_library_archive_2026 keeps one line and its
   // row the height of the others; a longer name wraps.
   property real widest: 0
   function measure() {
@@ -94,7 +94,7 @@ PopupWindow {
   BorderSurface {
     id: frame
     opacity: card.revealed ? 1 : 0
-    implicitWidth: Math.min(Style.space(360), Math.max(Style.space(280), Math.ceil(card.widest) + Style.space(8) * 2))
+    implicitWidth: Math.min(Style.space(380), Math.max(Style.space(280), Math.ceil(card.widest) + Style.space(8) * 2))
     implicitHeight: list.implicitHeight + Style.space(8) * 2
     color: Commons.Color.tooltip.background
     borderSpec: Border.surfaceSpec("tooltip", "border", Commons.Color.tooltip.border, 1)
@@ -118,7 +118,7 @@ PopupWindow {
           required property int index
           width: list.width
           play: card.shows
-          delay: 120 + index * 90
+          delay: index * 70
           onWantsChanged: Qt.callLater(card.measure)
           entry: modelData
           tone: card.toneOf(modelData.tone)
@@ -128,7 +128,9 @@ PopupWindow {
         }
       }
 
-      Text {
+      MonoText {
+        step: "small"
+        fontFamily: card.fontFamily
         visible: card.note !== ""
         width: list.width
         topPadding: Style.space(3)
@@ -136,9 +138,21 @@ PopupWindow {
         textFormat: Text.PlainText
         wrapMode: Text.Wrap
         text: card.note
-        color: Qt.darker(card.foreground, 1.4)
-        font.family: card.fontFamily
-        font.pixelSize: Style.font.caption
+        color: Qt.tint(card.foreground, Qt.rgba(Commons.Color.tooltip.background.r, Commons.Color.tooltip.background.g, Commons.Color.tooltip.background.b, 0.35))
+      }
+
+      // What the bar item does, since the card stands where its tooltip
+      // would. The same line in all four plugins' cards.
+      MonoText {
+        step: "small"
+        fontFamily: card.fontFamily
+        width: list.width
+        topPadding: Style.space(3)
+        leftPadding: Style.space(6)
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        text: "Click opens · right-click opens SSH · middle-click refreshes"
+        color: Qt.tint(card.foreground, Qt.rgba(Commons.Color.tooltip.background.r, Commons.Color.tooltip.background.g, Commons.Color.tooltip.background.b, 0.35))
       }
     }
   }

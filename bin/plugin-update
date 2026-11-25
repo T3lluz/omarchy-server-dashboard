@@ -10,7 +10,10 @@ the plugin's name and id from the manifest next to it.
 `apply` rewrites the plugin folder, and the shell reloads a plugin the
 moment a file there changes, which ends every process the plugin started.
 So the panel starts it detached, and it leaves its outcome in
-~/.local/state/<plugin>/update.json for the reloaded panel to show.
+~/.local/state/<plugin>/update.json for the reloaded panel to show. That
+reload keeps the QML the shell has already compiled, so the panel would stay
+partly the old version: after the success notification it restarts the shell,
+from a systemd unit of its own, as Sonus does.
 
 Local edits (a development copy, files dropped in by hand) used to stop the
 fast-forward. They are stashed with the untracked files, and the stash is
@@ -28,8 +31,11 @@ sys.dont_write_bytecode = True
 
 PLUGIN_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE_HOME = os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state")
-# Tests set this so a run never notifies or reloads the real shell.
+# Tests set this so a run never notifies, reloads or restarts the real shell.
 QUIET = os.environ.get("PLUGIN_UPDATE_QUIET") == "1"
+# Seconds between the "updated" notification and the shell's restart, so the
+# notification is on screen first.
+RESTART_DELAY = 3
 GIT_ENV = dict(os.environ, GIT_TERMINAL_PROMPT="0",
                GIT_SSH_COMMAND=os.environ.get("GIT_SSH_COMMAND", "ssh -oBatchMode=yes"))
 
@@ -70,7 +76,8 @@ PLUGIN = manifest()
 PLUGIN_ID = PLUGIN.get("id") or os.path.basename(PLUGIN_DIR)
 NAME = PLUGIN.get("name") or PLUGIN_ID
 # io.github.t3lluz.rog-deck keeps its state in ~/.local/state/rog-deck.
-STATE_FILE = os.path.join(STATE_HOME, PLUGIN_ID.rsplit(".", 1)[-1], "update.json")
+SLUG = PLUGIN_ID.rsplit(".", 1)[-1]
+STATE_FILE = os.path.join(STATE_HOME, SLUG, "update.json")
 
 
 def managed():
@@ -122,7 +129,7 @@ def check():
     Fetching only writes inside .git, which the shell's plugin watcher
     ignores, so a check never reloads the plugins.
     """
-    result = {"name": NAME, "current": PLUGIN.get("version"), "latest": None, "available": False,
+    result = {"name": NAME, "current": PLUGIN.get("version"), "latest": None, "commit": None, "available": False,
               "managed": False, "dirty": False, "notes": [], "error": None, "checked": int(time.time())}
     if not managed():
         result["error"] = "Installed without git, so it can't update itself"
@@ -133,6 +140,7 @@ def check():
         result["error"] = "Couldn't reach GitHub"
         return result
     head, fetched = git("rev-parse", "HEAD"), git("rev-parse", "FETCH_HEAD")
+    result["commit"] = fetched
     result["latest"] = manifest("FETCH_HEAD").get("version") or result["current"]
     if head == fetched or git("merge-base", "--is-ancestor", "FETCH_HEAD", "HEAD") is not None:
         # Up to date, or ahead of the remote, as a development copy can be.
@@ -163,6 +171,42 @@ def notify(summary, body=""):
                        capture_output=True, timeout=5)
     except (OSError, subprocess.SubprocessError):
         pass
+
+
+def restart_command():
+    tool = shutil.which("omarchy-restart-shell")
+    if tool:
+        return [tool]
+    tool = shutil.which("omarchy")
+    return [tool, "restart", "shell"] if tool else None
+
+
+def restart_shell():
+    """Restart the shell a few seconds from now, from outside it.
+
+    Run as a child of anything the shell started, the restart would end with
+    the shell. A transient user unit outlives it. False if nothing started."""
+    command = restart_command()
+    if QUIET or not command:
+        return False
+    if shutil.which("systemd-run"):
+        try:
+            done = subprocess.run(
+                ["systemd-run", "--user", "--quiet", "--collect", "--on-active=%d" % RESTART_DELAY,
+                 "--unit=%s-restart-shell" % SLUG, "--description=Restart the shell after a %s update" % NAME,
+                 "--setenv=PATH=" + os.environ.get("PATH", "/usr/bin"), *command],
+                capture_output=True, timeout=10, stdin=subprocess.DEVNULL)
+            if done.returncode == 0:
+                return True
+        except (OSError, subprocess.SubprocessError):
+            pass
+    try:
+        subprocess.Popen(["sh", "-c", 'sleep "$0"; exec "$@"', str(RESTART_DELAY), *command],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
+        return False
+    return True
 
 
 def installed_by_omarchy():
@@ -235,6 +279,7 @@ def apply():
     note = " Your own edits are kept in git stash." if stash == "kept" else ""
     write_state("done", "Updated to %s.%s" % (after, note), after)
     notify("%s updated to %s" % (NAME, after), note.strip())
+    restart_shell()
     print(after)
 
 
